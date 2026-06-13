@@ -23,7 +23,8 @@ const seed = {
       pilotId: "P-01",
       history: [{ at: "2026-06-13T16:00:00.000Z", action: "created", note: "初始申请" }]
     }
-  ]
+  ],
+  drafts: []
 };
 
 export async function loadDb() {
@@ -31,7 +32,9 @@ export async function loadDb() {
     await mkdir(dirname(dbPath), { recursive: true });
     await writeFile(dbPath, JSON.stringify(seed, null, 2));
   }
-  return JSON.parse(await readFile(dbPath, "utf8"));
+  const db = JSON.parse(await readFile(dbPath, "utf8"));
+  if (!db.drafts) db.drafts = [];
+  return db;
 }
 
 export async function saveDb(db) {

@@ -2,6 +2,7 @@ import http from "node:http";
 import { loadDb, saveDb } from "./utils/db.js";
 import { overlaps, taskWindow, activeTasksForPilot } from "./utils/time.js";
 import { handleShiftsCalendar } from "./routes/shifts.js";
+import { handleDraftCreate, handleDraftList, handleDraftDetail, handleDraftUpdate, handleDraftSubmit } from "./routes/drafts.js";
 
 const port = Number(process.env.PORT || 3009);
 
@@ -48,7 +49,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/") {
       return send(res, 200, {
         service: "港口引航站申请和排班API",
-        endpoints: ["GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar"]
+        endpoints: ["GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit"]
       });
     }
 
@@ -116,6 +117,29 @@ const server = http.createServer(async (req, res) => {
         addHistory(task, input.status, input.note || "状态更新");
         await saveDb(db);
         return send(res, 200, task);
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/drafts") {
+      const input = await body(req);
+      return handleDraftCreate(db, input, send, res);
+    }
+
+    if (req.method === "GET" && url.pathname === "/drafts") {
+      return handleDraftList(db, url.searchParams, send, res);
+    }
+
+    const draftMatch = url.pathname.match(/^\/drafts\/([^/]+)(?:\/([^/]+))?$/);
+    if (draftMatch) {
+      const [, draftId, draftAction] = draftMatch;
+      if (req.method === "GET" && !draftAction) return handleDraftDetail(db, draftId, send, res);
+      if (req.method === "PUT" && !draftAction) {
+        const input = await body(req);
+        return handleDraftUpdate(db, draftId, input, send, res);
+      }
+      if (req.method === "POST" && draftAction === "submit") {
+        const input = await body(req);
+        return handleDraftSubmit(db, draftId, input, send, res);
       }
     }
 

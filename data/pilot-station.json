@@ -68,6 +68,44 @@
           "note": "初始申请"
         }
       ]
+    },
+    {
+      "id": "T-1781389746400",
+      "vessel": {
+        "name": "远泰9",
+        "imo": "IMO9311002",
+        "type": "油轮",
+        "length": 220
+      },
+      "district": "西港",
+      "berthPlan": "靠泊W1",
+      "tideWindow": {
+        "start": "2026-06-15T06:00:00.000Z",
+        "end": "2026-06-15T09:00:00.000Z"
+      },
+      "requiredGrade": "A",
+      "status": "pending",
+      "pilotId": null,
+      "history": [
+        {
+          "at": "2026-06-13T22:29:06.400Z",
+          "action": "created",
+          "note": "测试草稿"
+        }
+      ]
+    }
+  ],
+  "drafts": [
+    {
+      "id": "D-1781389686447",
+      "vessel": null,
+      "district": "东港",
+      "berthPlan": null,
+      "tideWindow": null,
+      "requiredGrade": null,
+      "note": "待补充船舶信息",
+      "createdAt": "2026-06-13T22:28:06.447Z",
+      "updatedAt": "2026-06-13T22:28:06.447Z"
     }
   ]
 }
