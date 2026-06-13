@@ -4,7 +4,7 @@ import { overlaps, taskWindow, activeTasksForPilot } from "./utils/time.js";
 import { handleShiftsCalendar } from "./routes/shifts.js";
 import { handleDraftCreate, handleDraftList, handleDraftDetail, handleDraftUpdate, handleDraftSubmit } from "./routes/drafts.js";
 import { handleConfigOptions, handleConfigValidate } from "./routes/config.js";
-import { isValidDistrict, isValidShipType, isValidGrade, DEFAULT_TASK_STATUS, ASSIGNED_TASK_STATUS } from "./config/scheduling-rules.js";
+import { DEFAULT_TASK_STATUS, ASSIGNED_TASK_STATUS } from "./config/scheduling-rules.js";
 
 const port = Number(process.env.PORT || 3009);
 
@@ -26,9 +26,9 @@ function pilotFits(db, pilot, task, exceptTaskId) {
     const other = taskWindow(item);
     return !overlaps(window.start, window.end, other.start, other.end);
   });
-  const districtMatch = isValidDistrict(task.district) && pilot.districts.includes(task.district);
-  const shipTypeMatch = isValidShipType(task.vessel.type) && pilot.shipTypes.includes(task.vessel.type);
-  const gradeMatch = isValidGrade(task.requiredGrade) && pilot.grades.includes(task.requiredGrade);
+  const districtMatch = pilot.districts.includes(task.district);
+  const shipTypeMatch = pilot.shipTypes.includes(task.vessel.type);
+  const gradeMatch = pilot.grades.includes(task.requiredGrade);
   return {
     pilot,
     ok: onShift && noConflict && districtMatch && shipTypeMatch && gradeMatch,
