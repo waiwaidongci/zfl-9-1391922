@@ -1,4 +1,5 @@
 import { saveDb } from "../utils/db.js";
+import { DEFAULT_TASK_STATUS } from "../config/scheduling-rules.js";
 
 const REQUIRED_TASK_FIELDS = ["vessel", "district", "berthPlan", "tideWindow", "requiredGrade"];
 
@@ -74,7 +75,7 @@ export function handleDraftSubmit(db, id, input, send, res) {
     berthPlan: draft.berthPlan,
     tideWindow: draft.tideWindow,
     requiredGrade: draft.requiredGrade,
-    status: "pending",
+    status: DEFAULT_TASK_STATUS,
     pilotId: null,
     history: []
   };

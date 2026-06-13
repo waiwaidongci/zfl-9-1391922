@@ -1,3 +1,5 @@
+import { isActiveTaskStatus } from "../config/scheduling-rules.js";
+
 export function overlaps(aStart, aEnd, bStart, bEnd) {
   return new Date(aStart) < new Date(bEnd) && new Date(bStart) < new Date(aEnd);
 }
@@ -7,7 +9,7 @@ export function taskWindow(task) {
 }
 
 export function activeTasksForPilot(db, pilotId, exceptTaskId) {
-  return db.tasks.filter((task) => task.pilotId === pilotId && task.id !== exceptTaskId && !["cancelled", "done"].includes(task.status));
+  return db.tasks.filter((task) => task.pilotId === pilotId && task.id !== exceptTaskId && isActiveTaskStatus(task.status));
 }
 
 export function dayRange(dateStr) {

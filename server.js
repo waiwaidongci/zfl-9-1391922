@@ -3,6 +3,8 @@ import { loadDb, saveDb } from "./utils/db.js";
 import { overlaps, taskWindow, activeTasksForPilot } from "./utils/time.js";
 import { handleShiftsCalendar } from "./routes/shifts.js";
 import { handleDraftCreate, handleDraftList, handleDraftDetail, handleDraftUpdate, handleDraftSubmit } from "./routes/drafts.js";
+import { handleConfigOptions, handleConfigValidate } from "./routes/config.js";
+import { isValidDistrict, isValidShipType, isValidGrade, DEFAULT_TASK_STATUS, ASSIGNED_TASK_STATUS } from "./config/scheduling-rules.js";
 
 const port = Number(process.env.PORT || 3009);
 
@@ -24,15 +26,18 @@ function pilotFits(db, pilot, task, exceptTaskId) {
     const other = taskWindow(item);
     return !overlaps(window.start, window.end, other.start, other.end);
   });
+  const districtMatch = isValidDistrict(task.district) && pilot.districts.includes(task.district);
+  const shipTypeMatch = isValidShipType(task.vessel.type) && pilot.shipTypes.includes(task.vessel.type);
+  const gradeMatch = isValidGrade(task.requiredGrade) && pilot.grades.includes(task.requiredGrade);
   return {
     pilot,
-    ok: onShift && noConflict && pilot.districts.includes(task.district) && pilot.shipTypes.includes(task.vessel.type) && pilot.grades.includes(task.requiredGrade),
+    ok: onShift && noConflict && districtMatch && shipTypeMatch && gradeMatch,
     reasons: [
       onShift ? null : "not_on_shift",
       noConflict ? null : "time_conflict",
-      pilot.districts.includes(task.district) ? null : "district_mismatch",
-      pilot.shipTypes.includes(task.vessel.type) ? null : "ship_type_mismatch",
-      pilot.grades.includes(task.requiredGrade) ? null : "grade_mismatch"
+      districtMatch ? null : "district_mismatch",
+      shipTypeMatch ? null : "ship_type_mismatch",
+      gradeMatch ? null : "grade_mismatch"
     ].filter(Boolean)
   };
 }
@@ -49,8 +54,16 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/") {
       return send(res, 200, {
         service: "港口引航站申请和排班API",
-        endpoints: ["GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit"]
+        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit"]
       });
+    }
+
+    if (req.method === "GET" && url.pathname === "/config/options") {
+      return handleConfigOptions(send, res);
+    }
+
+    if (req.method === "GET" && url.pathname === "/config/validate") {
+      return handleConfigValidate(db, url.searchParams, send, res);
     }
 
     if (req.method === "GET" && url.pathname === "/shifts/calendar") {
@@ -78,7 +91,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/tasks") {
       const input = await body(req);
-      const task = { id: input.id || `T-${Date.now()}`, vessel: input.vessel, district: input.district, berthPlan: input.berthPlan, tideWindow: input.tideWindow, requiredGrade: input.requiredGrade, status: "pending", pilotId: null, history: [] };
+      const task = { id: input.id || `T-${Date.now()}`, vessel: input.vessel, district: input.district, berthPlan: input.berthPlan, tideWindow: input.tideWindow, requiredGrade: input.requiredGrade, status: DEFAULT_TASK_STATUS, pilotId: null, history: [] };
       addHistory(task, "created", input.note || "新建引航申请");
       db.tasks.push(task);
       await saveDb(db);
@@ -103,7 +116,7 @@ const server = http.createServer(async (req, res) => {
         const fit = pilotFits(db, pilot, task, task.id);
         if (!fit.ok) return send(res, 409, { error: "pilot_not_available", reasons: fit.reasons });
         task.pilotId = pilot.id;
-        task.status = "assigned";
+        task.status = ASSIGNED_TASK_STATUS;
         addHistory(task, "assigned", `分配给${pilot.name}`);
         await saveDb(db);
         return send(res, 200, task);

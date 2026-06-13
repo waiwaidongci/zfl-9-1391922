@@ -1,4 +1,5 @@
 import { dayRange, intervalsInDay, subtractIntervals, overlaps } from "../utils/time.js";
+import { isActiveTaskStatus } from "../config/scheduling-rules.js";
 
 function buildPilotCalendar(pilot, tasks, dayStart, dayEnd, districtFilter) {
   const relevantShifts = pilot.shifts.filter((s) => overlaps(s.start, s.end, dayStart, dayEnd));
@@ -38,7 +39,7 @@ export function handleShiftsCalendar(db, searchParams, send, res) {
   const dateParam = searchParams.get("date");
   const district = searchParams.get("district");
   const { start: dayStart, end: dayEnd, dateKey } = dayRange(dateParam);
-  const allTasks = db.tasks.filter((t) => !["cancelled", "done"].includes(t.status));
+  const allTasks = db.tasks.filter((t) => isActiveTaskStatus(t.status));
   const pilots = db.pilots
     .map((pilot) => buildPilotCalendar(pilot, allTasks, dayStart, dayEnd, district))
     .filter(Boolean);

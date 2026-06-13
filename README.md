@@ -8,6 +8,43 @@ npm start
 
 默认端口是`3009`，数据保存在`data/pilot-station.json`。候选引航员接口会检查值班、港区、船型、资质和时间冲突。
 
+## 配置模块
+
+排班规则配置集中在 `config/scheduling-rules.js`，包含港区、船型、资质等级和任务状态等常量，以及验证函数。后续创建引航员和任务时可复用这些配置选项。
+
+### 获取配置选项
+
+```bash
+curl "http://localhost:3009/config/options"
+```
+
+返回所有可用的配置选项：
+
+```json
+{
+  "districts": ["东港", "北槽", "西港"],
+  "shipTypes": ["散货船", "集装箱船", "油轮", "化学品船"],
+  "grades": ["A", "B"],
+  "taskStatuses": ["pending", "assigned", "in_progress", "completed", "cancelled", "done"],
+  "activeTaskStatuses": ["pending", "assigned", "in_progress"]
+}
+```
+
+### 验证配置值
+
+```bash
+curl "http://localhost:3009/config/validate?district=东港&grade=C"
+```
+
+返回验证结果：
+
+```json
+{
+  "district": { "value": "东港", "valid": true },
+  "grade": { "value": "C", "valid": false }
+}
+```
+
 ## 接口调用示例
 
 ### 查询值班日历
