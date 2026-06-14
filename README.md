@@ -1015,6 +1015,222 @@ curl "http://localhost:3009/import/sessions/$SESSION_ID"
 
 ---
 
+## 候选引航员与智能推荐模块
+
+候选引航员接口和推荐接口共享统一的评分解释结构，均包含：是否可派（`ok`/`eligible`）、班次覆盖（`shiftCoverage`）、港区（`district`）、船型（`shipType`）、等级（`grade`）、时间冲突（`noTimeConflict`）、请假冲突（`noLeaveConflict`）和负载分数（`workload`）七大维度。
+
+### 评分维度说明
+
+| 维度键 | 权重 | 说明 | 不合格原因码 |
+|--------|------|------|-------------|
+| `shiftCoverage` | 25 | 任务时间段与引航员值班表的重叠比例 | `not_on_shift` |
+| `district` | 20 | 引航员是否具备该港区作业资质 | `district_mismatch` |
+| `shipType` | 15 | 引航员是否具备该船型引航资质 | `ship_type_mismatch` |
+| `grade` | 20 | 引航员资质等级是否满足任务要求 | `grade_mismatch` |
+| `noTimeConflict` | 15 | 任务时间段是否与引航员已有任务冲突 | `time_conflict` |
+| `noLeaveConflict` | 10 | 任务时间段是否与引航员休假/停用冲突 | `leave_conflict` |
+| `workload` | 5 | 引航员当前进行中的任务数量（软性指标） | — |
+
+每个维度的 `breakdown` 条目结构：
+```json
+{
+  "score": 1.0,
+  "detail": { /* 维度-specific 详细数据 */ }
+}
+```
+
+---
+
+### 1. 查询候选引航员（GET /tasks/:id/candidates）
+
+返回所有引航员对该任务的适配情况，**保持旧字段兼容**（`ok`、`reasons`），同时输出完整评分维度。
+
+```bash
+curl "http://localhost:3009/tasks/T-260614-01/candidates"
+```
+
+**返回示例（200 OK）**：
+
+```json
+[
+  {
+    "pilotId": "P-01",
+    "name": "沈望",
+    "ok": true,
+    "reasons": [],
+    "eligible": true,
+    "disqualifying": [],
+    "totalScore": 92.5,
+    "weightedScores": {
+      "shiftCoverage": 25.0,
+      "district": 20.0,
+      "shipType": 15.0,
+      "grade": 20.0,
+      "noTimeConflict": 15.0,
+      "noLeaveConflict": 5.0,
+      "workload": 2.5
+    },
+    "breakdown": {
+      "shiftCoverage": {
+        "score": 1.0,
+        "detail": { "overlapMinutes": 180, "taskMinutes": 180, "shifts": 1 }
+      },
+      "district": {
+        "score": 1.0,
+        "detail": { "pilotDistricts": ["东港", "北槽"], "taskDistrict": "东港" }
+      },
+      "shipType": {
+        "score": 1.0,
+        "detail": { "pilotShipTypes": ["散货船", "集装箱船"], "taskShipType": "散货船" }
+      },
+      "grade": {
+        "score": 1.0,
+        "detail": { "pilotGrades": ["A", "B"], "pilotBestGrade": "A", "requiredGrade": "B" }
+      },
+      "noTimeConflict": {
+        "score": 1.0,
+        "detail": { "activeTaskCount": 0, "conflictingTasks": [] }
+      },
+      "noLeaveConflict": {
+        "score": 1.0,
+        "detail": { "conflictingLeaves": [] }
+      },
+      "workload": {
+        "score": 0.5,
+        "detail": { "activeTaskCount": 1 }
+      }
+    }
+  },
+  {
+    "pilotId": "P-02",
+    "name": "何澜",
+    "ok": false,
+    "reasons": ["district_mismatch", "time_conflict"],
+    "eligible": false,
+    "disqualifying": ["district_mismatch", "time_conflict"],
+    "totalScore": 35.0,
+    "weightedScores": {
+      "shiftCoverage": 25.0,
+      "district": 0.0,
+      "shipType": 10.0,
+      "grade": 0.0,
+      "noTimeConflict": 0.0,
+      "noLeaveConflict": 10.0,
+      "workload": 0.0
+    },
+    "breakdown": {
+      "shiftCoverage": { "score": 1.0, "detail": { "overlapMinutes": 180, "taskMinutes": 180, "shifts": 1 } },
+      "district": { "score": 0.0, "detail": { "pilotDistricts": ["西港"], "taskDistrict": "东港" } },
+      "shipType": { "score": 0.667, "detail": { "pilotShipTypes": ["油轮"], "taskShipType": "散货船" } },
+      "grade": { "score": 0.0, "detail": { "pilotGrades": ["B"], "pilotBestGrade": "B", "requiredGrade": "A" } },
+      "noTimeConflict": { "score": 0.0, "detail": { "activeTaskCount": 2, "conflictingTasks": ["T-260614-03"] } },
+      "noLeaveConflict": { "score": 1.0, "detail": { "conflictingLeaves": [] } },
+      "workload": { "score": 0.1, "detail": { "activeTaskCount": 3 } }
+    }
+  }
+]
+```
+
+**字段兼容性说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `pilotId` | string | 引航员ID |
+| `name` | string | 引航员姓名 |
+| `ok` | boolean | **旧字段**：是否可派（与 `eligible` 等价，向后兼容） |
+| `reasons` | string[] | **旧字段**：不合格原因数组（与 `disqualifying` 等价，向后兼容） |
+| `eligible` | boolean | 是否可派（所有硬性维度通过） |
+| `disqualifying` | string[] | 不合格的维度原因码 |
+| `totalScore` | number | 加权综合总分（0~100） |
+| `weightedScores` | object | 各维度加权分数 |
+| `breakdown` | object | 各维度原始分数和详细数据 |
+
+---
+
+### 2. 智能推荐引航员（POST /tasks/:id/recommend）
+
+返回按综合评分排序的推荐列表，输出完整评分维度和维度元数据。
+
+```bash
+curl -X POST "http://localhost:3009/tasks/T-260614-01/recommend" \
+  -H "Content-Type: application/json" \
+  -d '{ "limit": 3 }'
+```
+
+**返回示例（200 OK）**：
+
+```json
+{
+  "taskId": "T-260614-01",
+  "dimensions": [
+    { "key": "shiftCoverage", "label": "值班覆盖", "description": "任务时间段与引航员值班表的重叠比例", "weight": 25 },
+    { "key": "district", "label": "港区匹配", "description": "引航员是否具备该港区作业资质", "weight": 20 },
+    { "key": "shipType", "label": "船型匹配", "description": "引航员是否具备该船型引航资质", "weight": 15 },
+    { "key": "grade", "label": "资质等级", "description": "引航员资质等级是否满足任务要求", "weight": 20 },
+    { "key": "noTimeConflict", "label": "任务冲突", "description": "任务时间段是否与引航员已有任务冲突", "weight": 15 },
+    { "key": "noLeaveConflict", "label": "休假冲突", "description": "任务时间段是否与引航员休假/停用冲突", "weight": 10 },
+    { "key": "workload", "label": "工作负载", "description": "引航员当前进行中的任务数量", "weight": 5 }
+  ],
+  "candidates": [
+    {
+      "pilotId": "P-02",
+      "name": "何澜",
+      "totalScore": 92.5,
+      "eligible": true,
+      "disqualifying": [],
+      "weightedScores": {
+        "shiftCoverage": 25.0,
+        "district": 20.0,
+        "shipType": 15.0,
+        "grade": 20.0,
+        "noTimeConflict": 15.0,
+        "noLeaveConflict": 10.0,
+        "workload": 2.5
+      },
+      "breakdown": {
+        "shiftCoverage": { "score": 1.0, "detail": { "overlapMinutes": 180, "taskMinutes": 180, "shifts": 1 } },
+        "district": { "score": 1.0, "detail": { "pilotDistricts": ["东港"], "taskDistrict": "东港" } },
+        "shipType": { "score": 1.0, "detail": { "pilotShipTypes": ["散货船", "油轮"], "taskShipType": "散货船" } },
+        "grade": { "score": 1.0, "detail": { "pilotGrades": ["A", "B"], "pilotBestGrade": "A", "requiredGrade": "B" } },
+        "noTimeConflict": { "score": 1.0, "detail": { "activeTaskCount": 0, "conflictingTasks": [] } },
+        "noLeaveConflict": { "score": 1.0, "detail": { "conflictingLeaves": [] } },
+        "workload": { "score": 0.5, "detail": { "activeTaskCount": 1 } }
+      }
+    }
+  ]
+}
+```
+
+**请求体参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `limit` | number | 否 | 返回前 N 个推荐结果，不传则返回全部 |
+
+---
+
+### 3. 导入预览中的 topPilot
+
+批量导入预览接口（`POST /import/tasks`）返回的 `creatable`、`updatable`、`conflicting` 列表中，每条任务的 `topPilot` 字段继续可用，并已升级为完整评分结构：
+
+```json
+{
+  "topPilot": {
+    "pilotId": "P-01",
+    "name": "沈望",
+    "score": 92.5,
+    "eligible": true,
+    "disqualifying": [],
+    "weightedScores": { /* 各维度加权分 */ },
+    "breakdown": { /* 各维度详细评分 */ }
+  }
+}
+```
+
+原有字段 `pilotId`、`name`、`score` 保持不变，新增字段提供完整解释。
+
+---
+
 ## 接口调用示例
 
 ### 查询值班日历

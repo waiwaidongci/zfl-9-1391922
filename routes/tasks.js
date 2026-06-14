@@ -106,7 +106,12 @@ export function handleTaskCandidates(db, task, send, res) {
     pilotId: item.pilot.id,
     name: item.pilot.name,
     ok: item.ok,
-    reasons: item.reasons
+    reasons: item.reasons,
+    eligible: item.eligible,
+    disqualifying: item.disqualifying,
+    totalScore: item.totalScore,
+    weightedScores: item.weightedScores,
+    breakdown: item.breakdown
   })));
 }
 

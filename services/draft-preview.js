@@ -56,7 +56,9 @@ function summarizePilotEligibility(db, task) {
     name: r.name,
     eligible: r.eligible,
     score: r.totalScore,
-    disqualifying: r.disqualifying
+    disqualifying: r.disqualifying,
+    weightedScores: r.weightedScores,
+    breakdown: r.breakdown
   }));
   return {
     totalPilots: db.pilots.length,

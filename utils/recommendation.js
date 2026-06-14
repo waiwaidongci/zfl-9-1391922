@@ -10,7 +10,7 @@ function bestGrade(pilotGrades) {
   return pilotGrades.reduce((best, g) => (rank[g] ?? 0) > (rank[best] ?? 0) ? g : best, null);
 }
 
-export function evaluateCandidate(db, pilot, task) {
+export function evaluateCandidate(db, pilot, task, exceptTaskId) {
   const window = taskWindow(task);
   const taskMinutes = minutesBetween(window.start, window.end);
   const breakdown = {};
@@ -42,7 +42,8 @@ export function evaluateCandidate(db, pilot, task) {
     detail: { pilotGrades: pilot.grades, pilotBestGrade, requiredGrade: task.requiredGrade }
   };
 
-  const activeTasks = activeTasksForPilot(db, pilot.id, task.id);
+  const effectiveTaskId = exceptTaskId !== undefined ? exceptTaskId : task.id;
+  const activeTasks = activeTasksForPilot(db, pilot.id, effectiveTaskId);
   const conflicts = activeTasks.filter((t) => overlaps(window.start, window.end, t.tideWindow.start, t.tideWindow.end));
   breakdown.noTimeConflict = {
     score: conflicts.length === 0 ? 1 : 0,
@@ -93,6 +94,20 @@ export function evaluateCandidate(db, pilot, task) {
   };
 }
 
+export function buildCandidateExplanation(db, pilot, task, exceptTaskId) {
+  const evaluation = evaluateCandidate(db, pilot, task, exceptTaskId);
+  return {
+    pilot,
+    ok: evaluation.eligible,
+    reasons: evaluation.disqualifying,
+    eligible: evaluation.eligible,
+    disqualifying: evaluation.disqualifying,
+    totalScore: evaluation.totalScore,
+    weightedScores: evaluation.weightedScores,
+    breakdown: evaluation.breakdown
+  };
+}
+
 export function recommendPilots(db, task, limit) {
   const candidates = db.pilots.map((pilot) => evaluateCandidate(db, pilot, task));
   candidates.sort((a, b) => {
@@ -113,26 +128,15 @@ export function recommendPilots(db, task, limit) {
 }
 
 export function pilotFitsCheck(db, pilot, task, exceptTaskId) {
-  const window = taskWindow(task);
-  const onShift = pilot.shifts.some((shift) => overlaps(window.start, window.end, shift.start, shift.end));
-  const noConflict = activeTasksForPilot(db, pilot.id, exceptTaskId).every((item) => {
-    const other = taskWindow(item);
-    return !overlaps(window.start, window.end, other.start, other.end);
-  });
-  const noLeaveConflict = leaveConflictsForPilot(db, pilot.id, window.start, window.end).length === 0;
-  const districtMatch = pilot.districts.includes(task.district);
-  const shipTypeMatch = pilot.shipTypes.includes(task.vessel.type);
-  const gradeMatch = pilot.grades.includes(task.requiredGrade);
+  const explanation = buildCandidateExplanation(db, pilot, task, exceptTaskId);
   return {
-    pilot,
-    ok: onShift && noConflict && noLeaveConflict && districtMatch && shipTypeMatch && gradeMatch,
-    reasons: [
-      onShift ? null : "not_on_shift",
-      noConflict ? null : "time_conflict",
-      noLeaveConflict ? null : "leave_conflict",
-      districtMatch ? null : "district_mismatch",
-      shipTypeMatch ? null : "ship_type_mismatch",
-      gradeMatch ? null : "grade_mismatch"
-    ].filter(Boolean)
+    pilot: explanation.pilot,
+    ok: explanation.ok,
+    reasons: explanation.reasons,
+    eligible: explanation.eligible,
+    disqualifying: explanation.disqualifying,
+    totalScore: explanation.totalScore,
+    weightedScores: explanation.weightedScores,
+    breakdown: explanation.breakdown
   };
 }

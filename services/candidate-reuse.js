@@ -95,12 +95,19 @@ export function recommendForTask(db, task, limit = 3) {
       pilotId: c.pilotId,
       name: c.name,
       score: c.totalScore,
-      disqualifying: c.disqualifying
+      eligible: c.eligible,
+      disqualifying: c.disqualifying,
+      weightedScores: c.weightedScores,
+      breakdown: c.breakdown
     })),
     topRecommendation: top[0] ? {
       pilotId: top[0].pilotId,
       name: top[0].name,
-      score: top[0].totalScore
+      score: top[0].totalScore,
+      eligible: top[0].eligible,
+      disqualifying: top[0].disqualifying,
+      weightedScores: top[0].weightedScores,
+      breakdown: top[0].breakdown
     } : null
   };
 }
