@@ -1031,6 +1031,8 @@ curl "http://localhost:3009/import/sessions/$SESSION_ID"
 | `noLeaveConflict` | 10 | 任务时间段是否与引航员休假/停用冲突 | `leave_conflict` |
 | `workload` | 5 | 引航员当前进行中的任务数量（软性指标） | — |
 
+当前权重合计为 110，因此 `totalScore` 的理论最高值为 110。
+
 每个维度的 `breakdown` 条目结构：
 ```json
 {
@@ -1141,7 +1143,7 @@ curl "http://localhost:3009/tasks/T-260614-01/candidates"
 | `reasons` | string[] | **旧字段**：不合格原因数组（与 `disqualifying` 等价，向后兼容） |
 | `eligible` | boolean | 是否可派（所有硬性维度通过） |
 | `disqualifying` | string[] | 不合格的维度原因码 |
-| `totalScore` | number | 加权综合总分（0~100） |
+| `totalScore` | number | 加权综合总分（0~110） |
 | `weightedScores` | object | 各维度加权分数 |
 | `breakdown` | object | 各维度原始分数和详细数据 |
 
