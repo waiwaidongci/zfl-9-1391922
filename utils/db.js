@@ -178,16 +178,39 @@ export function getLeaveRecord(db, recordId) {
   return db.leaveRecords.find((r) => r.id === recordId) || null;
 }
 
+let _auditWriteLock = Promise.resolve();
+
 export async function loadAuditLog() {
   if (!existsSync(auditLogPath)) {
     await mkdir(dirname(auditLogPath), { recursive: true });
     await writeFile(auditLogPath, JSON.stringify(auditSeed, null, 2));
   }
-  const auditLog = JSON.parse(await readFile(auditLogPath, "utf8"));
-  if (!auditLog.events) auditLog.events = [];
-  return auditLog;
+  try {
+    const content = await readFile(auditLogPath, "utf8");
+    if (!content || content.trim().length === 0) {
+      return { events: [] };
+    }
+    const auditLog = JSON.parse(content);
+    if (!auditLog.events) auditLog.events = [];
+    return auditLog;
+  } catch (err) {
+    console.warn(`[loadAuditLog] JSON解析失败，重置为空日志: ${err.message}`);
+    const fresh = { events: [] };
+    await writeFile(auditLogPath, JSON.stringify(fresh, null, 2));
+    return fresh;
+  }
 }
 
 export async function saveAuditLog(auditLog) {
-  await writeFile(auditLogPath, JSON.stringify(auditLog, null, 2));
+  const prevLock = _auditWriteLock;
+  let releaseLock;
+  _auditWriteLock = new Promise((resolve) => {
+    releaseLock = resolve;
+  });
+  try {
+    await prevLock;
+    await writeFile(auditLogPath, JSON.stringify(auditLog, null, 2));
+  } finally {
+    releaseLock();
+  }
 }

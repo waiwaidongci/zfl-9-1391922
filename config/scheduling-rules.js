@@ -12,11 +12,15 @@ export const DEFAULT_TASK_STATUS = "pending";
 
 export const ASSIGNED_TASK_STATUS = "assigned";
 
-export const CHANGE_REQUEST_STATUSES = ["pending", "approved", "rejected"];
+export const CHANGE_REQUEST_STATUSES = ["pending", "approved", "rejected", "superseded"];
 
 export const DEFAULT_CHANGE_REQUEST_STATUS = "pending";
 
 export const CHANGE_REQUEST_TYPES = ["tide_window", "berth_plan", "cancel", "other"];
+
+export const PENDING_REQUEST_POLICIES = ["block", "reject_existing", "allow"];
+
+export const DEFAULT_PENDING_REQUEST_POLICY = "block";
 
 export const schedulingOptions = {
   districts: DISTRICTS,
@@ -25,7 +29,9 @@ export const schedulingOptions = {
   taskStatuses: TASK_STATUSES,
   activeTaskStatuses: ACTIVE_TASK_STATUSES,
   changeRequestStatuses: CHANGE_REQUEST_STATUSES,
-  changeRequestTypes: CHANGE_REQUEST_TYPES
+  changeRequestTypes: CHANGE_REQUEST_TYPES,
+  pendingRequestPolicies: PENDING_REQUEST_POLICIES,
+  defaultPendingRequestPolicy: DEFAULT_PENDING_REQUEST_POLICY
 };
 
 export function isValidDistrict(value) {
@@ -54,4 +60,8 @@ export function isValidChangeRequestStatus(value) {
 
 export function isValidChangeRequestType(value) {
   return CHANGE_REQUEST_TYPES.includes(value);
+}
+
+export function isValidPendingRequestPolicy(value) {
+  return PENDING_REQUEST_POLICIES.includes(value);
 }

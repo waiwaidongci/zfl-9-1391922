@@ -25,7 +25,10 @@ export const AUDIT_ACTIONS = {
   IMPORT_CREATE: "import_create",
   IMPORT_UPDATE: "import_update",
   LEAVE_IMPACT: "leave_impact",
-  LEAVE_RECOVERY: "leave_recovery"
+  LEAVE_RECOVERY: "leave_recovery",
+  AUTO_REJECT: "auto_reject",
+  SUPERSEDE: "supersede",
+  RELATED_STATUS_CHANGE: "related_status_change"
 };
 
 export const ROLLBACKABLE_ACTIONS = [
@@ -33,6 +36,8 @@ export const ROLLBACKABLE_ACTIONS = [
   AUDIT_ACTIONS.STATUS_CHANGE,
   AUDIT_ACTIONS.UPDATE
 ];
+
+let _auditEventLock = Promise.resolve();
 
 function generateAuditId() {
   return `AUD-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
@@ -53,26 +58,36 @@ export async function recordAuditEvent({
   rollbackable = false,
   relatedAuditId = null
 }) {
-  const auditLog = await loadAuditLog();
+  const prevLock = _auditEventLock;
+  let releaseLock;
+  _auditEventLock = new Promise((resolve) => {
+    releaseLock = resolve;
+  });
+  try {
+    await prevLock;
+    const auditLog = await loadAuditLog();
 
-  const event = {
-    id: generateAuditId(),
-    objectType,
-    objectId,
-    action,
-    before: deepClone(before),
-    after: deepClone(after),
-    operator,
-    note,
-    rollbackable,
-    relatedAuditId,
-    timestamp: new Date().toISOString()
-  };
+    const event = {
+      id: generateAuditId(),
+      objectType,
+      objectId,
+      action,
+      before: deepClone(before),
+      after: deepClone(after),
+      operator,
+      note,
+      rollbackable,
+      relatedAuditId,
+      timestamp: new Date().toISOString()
+    };
 
-  auditLog.events.push(event);
-  await saveAuditLog(auditLog);
+    auditLog.events.push(event);
+    await saveAuditLog(auditLog);
 
-  return event;
+    return event;
+  } finally {
+    releaseLock();
+  }
 }
 
 export async function getAuditHistory({ objectId, objectType, action, limit = 50, offset = 0 } = {}) {
