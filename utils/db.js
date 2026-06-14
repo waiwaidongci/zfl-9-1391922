@@ -49,7 +49,30 @@ const seed = {
       history: [{ at: "2026-06-13T22:29:06.400Z", action: "created", note: "西港油轮任务" }]
     }
   ],
-  drafts: [],
+  drafts: [
+    {
+      id: "D-260614-01",
+      vessel: { name: "东方之星", imo: "IMO9500101", type: "化学品船", length: 200 },
+      district: "西港",
+      berthPlan: "靠泊W3",
+      tideWindow: { start: "2026-06-16T03:00:00.000Z", end: "2026-06-16T06:00:00.000Z" },
+      requiredGrade: "A",
+      note: "化学品船待船公司最终确认吃水",
+      createdAt: "2026-06-13T18:00:00.000Z",
+      updatedAt: "2026-06-13T18:00:00.000Z"
+    },
+    {
+      id: "D-260614-02",
+      vessel: { name: "远洋先锋", imo: "IMO9600202", type: "集装箱船", length: 300 },
+      district: "北槽",
+      berthPlan: null,
+      tideWindow: null,
+      requiredGrade: "A",
+      note: "大型集装箱船，泊位和窗口待港调统一排期",
+      createdAt: "2026-06-13T21:15:00.000Z",
+      updatedAt: "2026-06-13T21:15:00.000Z"
+    }
+  ],
   changeRequests: []
 };
 
