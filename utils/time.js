@@ -5,6 +5,15 @@ export function overlaps(aStart, aEnd, bStart, bEnd) {
   return new Date(aStart) < new Date(bEnd) && new Date(bStart) < new Date(aEnd);
 }
 
+export function affectedActiveTasks(db, pilotId, windowStart, windowEnd) {
+  return db.tasks.filter((task) => {
+    if (task.pilotId !== pilotId) return false;
+    if (!isActiveTaskStatus(task.status)) return false;
+    if (!task.tideWindow || !task.tideWindow.start || !task.tideWindow.end) return false;
+    return overlaps(windowStart, windowEnd, task.tideWindow.start, task.tideWindow.end);
+  });
+}
+
 export function leaveConflictsForPilot(db, pilotId, windowStart, windowEnd) {
   const leaves = activeLeavesForPilot(db, pilotId);
   return leaves.filter((leave) =>

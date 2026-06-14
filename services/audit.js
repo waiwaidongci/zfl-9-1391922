@@ -23,7 +23,9 @@ export const AUDIT_ACTIONS = {
   CANCEL: "cancel",
   ROLLBACK: "rollback",
   IMPORT_CREATE: "import_create",
-  IMPORT_UPDATE: "import_update"
+  IMPORT_UPDATE: "import_update",
+  LEAVE_IMPACT: "leave_impact",
+  LEAVE_RECOVERY: "leave_recovery"
 };
 
 export const ROLLBACKABLE_ACTIONS = [

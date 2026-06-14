@@ -127,6 +127,26 @@ export function recommendPilots(db, task, limit) {
   return result;
 }
 
+export function findAlternativesForTask(db, task, excludePilotId, limit) {
+  const effectiveLimit = typeof limit === "number" ? limit : 3;
+  const candidates = db.pilots
+    .filter((pilot) => pilot.id !== excludePilotId)
+    .map((pilot) => evaluateCandidate(db, pilot, task));
+  candidates.sort((a, b) => {
+    if (b.eligible !== a.eligible) return b.eligible ? 1 : -1;
+    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+    return a.name.localeCompare(b.name);
+  });
+  return candidates.slice(0, effectiveLimit).map((c) => ({
+    pilotId: c.pilotId,
+    name: c.name,
+    eligible: c.eligible,
+    totalScore: c.totalScore,
+    disqualifying: c.disqualifying,
+    weightedScores: c.weightedScores
+  }));
+}
+
 export function pilotFitsCheck(db, pilot, task, exceptTaskId) {
   const explanation = buildCandidateExplanation(db, pilot, task, exceptTaskId);
   return {
