@@ -154,8 +154,6 @@ export function handleChangeRequestCreate(db, taskId, input, send, res) {
   if (input.berthPlan !== undefined) proposedChanges.berthPlan = input.berthPlan;
   if (input.status !== undefined) proposedChanges.status = input.status;
 
-  const conflictCheck = checkConflicts(db, task, proposedChanges);
-
   const auditPromises = [];
   let supersededIds = [];
 
@@ -187,6 +185,8 @@ export function handleChangeRequestCreate(db, taskId, input, send, res) {
       `同任务待审批治理：${pendingSameTask.length}个待审批申请被取代：${supersededIds.join(", ")}，策略: reject_existing`
     );
   }
+
+  const conflictCheck = checkConflicts(db, task, proposedChanges);
 
   const now = new Date().toISOString();
   const cr = {
