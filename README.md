@@ -423,7 +423,39 @@ curl "http://localhost:3009/board?date=2026-06-14T08:00:00.000Z"
         "availablePilots": [
           { "pilotId": "P-03", "name": "周屿", "grades": ["A"], "shipTypes": ["散货船", "集装箱船", "油轮"] }
         ]
-      }
+      },
+      "hourlyCapacity": [
+        {
+          "index": 0,
+          "hour": 8,
+          "start": "2026-06-14T08:00:00.000Z",
+          "end": "2026-06-14T09:00:00.000Z",
+          "taskCount": 1,
+          "peakOverlap": 1,
+          "availablePilots": 2,
+          "totalPilots": 3,
+          "gapCauses": [
+            {
+              "pilotId": "P-01",
+              "name": "沈望",
+              "unavailableReasons": [
+                { "code": "busy", "detail": [{ "taskId": "T-260614-01", "vesselName": "远泰7", "status": "assigned" }] }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "hour": 9,
+          "start": "2026-06-14T09:00:00.000Z",
+          "end": "2026-06-14T10:00:00.000Z",
+          "taskCount": 0,
+          "peakOverlap": 0,
+          "availablePilots": 3,
+          "totalPilots": 3,
+          "gapCauses": []
+        }
+      ]
     }
   ]
 }
@@ -443,6 +475,24 @@ curl "http://localhost:3009/board?date=2026-06-14T08:00:00.000Z"
 | `districts[].pilots.total` | 该港区总引航员数 |
 | `districts[].pilots.available` | 该港区可用引航员数（值班、无休假、无任务冲突） |
 | `districts[].pilots.availablePilots` | 可用引航员详情列表 |
+| `districts[].hourlyCapacity` | 未来12小时按小时分桶的运力视图（共12条） |
+
+**hourlyCapacity 每小时条目字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| `index` | 桶序号（0~11） |
+| `hour` | UTC小时数（0~23） |
+| `start` / `end` | 该小时桶的起止时间（ISO） |
+| `taskCount` | 该小时内与潮汐窗口有重叠的活跃任务数 |
+| `peakOverlap` | 该小时内任务并发峰值 |
+| `availablePilots` | 该小时内可用引航员数量 |
+| `totalPilots` | 该港区注册引航员总数 |
+| `gapCauses[]` | 不可用引航员及缺口原因列表 |
+| `gapCauses[].pilotId` / `name` | 不可用引航员ID/姓名 |
+| `gapCauses[].unavailableReasons[]` | 不可用原因数组 |
+| `unavailableReasons[].code` | 缺口原因码：off_shift/leave/busy |
+| `unavailableReasons[].detail` | 具体原因详情 |
 
 ---
 
@@ -453,7 +503,7 @@ curl "http://localhost:3009/board/东港"
 curl "http://localhost:3009/board/北槽?date=2026-06-14T10:00:00.000Z"
 ```
 
-港区名为 URL 编码的中文，返回结构与全港区看板中单个 `districts` 条目一致，外加 `generatedAt` 和 `window`。
+港区名为 URL 编码的中文，返回结构与全港区看板中单个 `districts` 条目一致，外加 `generatedAt` 和 `window`，同样包含 `hourlyCapacity` 字段。
 
 ---
 
@@ -472,6 +522,16 @@ curl "http://localhost:3009/board/北槽?date=2026-06-14T10:00:00.000Z"
 - 在未来12小时内有值班时段
 - 无休假冲突
 - 无已分配的活跃任务时间冲突
+
+### 5. 运力缺口原因码
+
+`hourlyCapacity[].gapCauses[].unavailableReasons[].code` 可能取值：
+
+| code | 说明 | detail 内容 |
+|------|------|------------|
+| `off_shift` | 不在值班时段 | 不在值班时段 字符串 |
+| `leave` | 请假/临时停用 | 请假记录数组 |
+| `busy` | 已分配活跃任务占用 | 占用任务数组 |
 
 ---
 

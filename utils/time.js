@@ -122,3 +122,19 @@ export function peakOverlapCount(intervals, windowStart, windowEnd) {
   }
   return peak;
 }
+
+export function hourlyBuckets(dateStr, hourCount = 12) {
+  const base = dateStr ? new Date(dateStr) : new Date();
+  const buckets = [];
+  for (let i = 0; i < hourCount; i++) {
+    const start = new Date(base.getTime() + i * 3600 * 1000);
+    const end = new Date(base.getTime() + (i + 1) * 3600 * 1000);
+    buckets.push({
+      index: i,
+      hour: start.getUTCHours(),
+      start: start.toISOString(),
+      end: end.toISOString()
+    });
+  }
+  return buckets;
+}

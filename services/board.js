@@ -1,5 +1,5 @@
 import { DISTRICTS, ACTIVE_TASK_STATUSES } from "../config/scheduling-rules.js";
-import { nextTwelveHours, overlaps, leaveConflictsForPilot, peakOverlapCount, countOverlapping } from "../utils/time.js";
+import { nextTwelveHours, overlaps, leaveConflictsForPilot, peakOverlapCount, countOverlapping, hourlyBuckets } from "../utils/time.js";
 import { activeTasksForPilot } from "../utils/time.js";
 
 const BOARD_STATUSES = ["pending", "assigned", "in_progress", "done", "cancelled"];
@@ -76,13 +76,80 @@ function availablePilots(db, district, windowStart, windowEnd) {
   };
 }
 
+function pilotAvailabilityReasons(db, pilot, windowStart, windowEnd) {
+  const reasons = [];
+  const onShift = pilot.shifts.some((s) => overlaps(s.start, s.end, windowStart, windowEnd));
+  if (!onShift) {
+    reasons.push({ code: "off_shift", detail: "不在值班时段" });
+    return reasons;
+  }
+  const leaves = leaveConflictsForPilot(db, pilot.id, windowStart, windowEnd);
+  if (leaves.length > 0) {
+    reasons.push({
+      code: "leave",
+      detail: leaves.map((l) => ({ leaveId: l.id, type: l.type, reason: l.reason }))
+    });
+  }
+  const activeTasks = activeTasksForPilot(db, pilot.id);
+  const busyTasks = activeTasks.filter((t) => overlaps(t.tideWindow.start, t.tideWindow.end, windowStart, windowEnd));
+  if (busyTasks.length > 0) {
+    reasons.push({
+      code: "busy",
+      detail: busyTasks.map((t) => ({ taskId: t.id, vesselName: t.vessel.name, status: t.status }))
+    });
+  }
+  return reasons;
+}
+
+function hourlyCapacity(db, district, dateStr) {
+  const buckets = hourlyBuckets(dateStr, 12);
+  const districtTasks = (tasksByDistrict(db.tasks)[district] || []).filter((t) =>
+    ACTIVE_TASK_STATUSES.includes(t.status)
+  );
+  const districtPilots = pilotsForDistrict(db, district);
+  const result = [];
+  for (const bucket of buckets) {
+    const bucketTasks = districtTasks.filter((t) =>
+      overlaps(t.tideWindow.start, t.tideWindow.end, bucket.start, bucket.end)
+    );
+    const taskIntervals = bucketTasks.map((t) => ({ start: t.tideWindow.start, end: t.tideWindow.end }));
+    const peak = peakOverlapCount(taskIntervals, bucket.start, bucket.end);
+    const available = districtPilots.filter((p) => isPilotAvailable(db, p, bucket.start, bucket.end));
+    const gapCauses = [];
+    for (const pilot of districtPilots) {
+      if (isPilotAvailable(db, pilot, bucket.start, bucket.end)) continue;
+      const reasons = pilotAvailabilityReasons(db, pilot, bucket.start, bucket.end);
+      if (reasons.length > 0) {
+        gapCauses.push({
+          pilotId: pilot.id,
+          name: pilot.name,
+          unavailableReasons: reasons
+        });
+      }
+    }
+    result.push({
+      index: bucket.index,
+      hour: bucket.hour,
+      start: bucket.start,
+      end: bucket.end,
+      taskCount: bucketTasks.length,
+      peakOverlap: peak,
+      availablePilots: available.length,
+      totalPilots: districtPilots.length,
+      gapCauses
+    });
+  }
+  return result;
+}
+
 export function buildDistrictBoard(db, district, windowStart, windowEnd) {
   const districtTasks = tasksByDistrict(db.tasks)[district] || [];
   return {
     district,
     taskCounts: statusCounts(districtTasks),
     tidePressure: tidePressure(districtTasks.filter((t) => ACTIVE_TASK_STATUSES.includes(t.status)), windowStart, windowEnd),
-    pilots: availablePilots(db, district, windowStart, windowEnd)
+    pilots: availablePilots(db, district, windowStart, windowEnd),
+    hourlyCapacity: hourlyCapacity(db, district, windowStart)
   };
 }
 
