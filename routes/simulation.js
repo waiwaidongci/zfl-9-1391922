@@ -1,4 +1,4 @@
-import { runSimulation } from "../services/simulation/index.js";
+import { runSimulation, submitSimulationAssignments } from "../services/simulation/index.js";
 import { validateTaskRow } from "../utils/validator.js";
 import { isValidDistrict, isValidShipType, isValidGrade } from "../config/scheduling-rules.js";
 
@@ -133,4 +133,52 @@ export function handleSimulationDispatch(db, input, send, res) {
 
   const result = runSimulation(db, { tasks: input.tasks, tempShifts });
   return send(res, 200, result);
+}
+
+export async function handleSimulationSubmit(db, input, send, res) {
+  if (!input || !Array.isArray(input.assignmentLog)) {
+    return send(res, 400, {
+      error: "missing_assignment_log",
+      message: "请求体必须包含 assignmentLog 数组"
+    });
+  }
+
+  const operator = typeof input.operator === "string" && input.operator.trim().length > 0
+    ? input.operator
+    : null;
+  const note = typeof input.note === "string" && input.note.trim().length > 0
+    ? input.note
+    : null;
+
+  try {
+    const result = await submitSimulationAssignments(db, {
+      assignmentLog: input.assignmentLog,
+      operator,
+      note
+    });
+
+    if (result.error === "invalid_assignment_log" || result.error === "empty_assignment_log" || result.error === "too_many_entries") {
+      return send(res, 400, result);
+    }
+
+    if (result.error === "format_validation_failed") {
+      return send(res, 400, result);
+    }
+
+    if (result.success) {
+      return send(res, 200, result);
+    }
+
+    if (result.partialSuccess) {
+      return send(res, 207, result);
+    }
+
+    return send(res, 409, result);
+  } catch (err) {
+    console.error("[handleSimulationSubmit] 处理异常:", err);
+    return send(res, 500, {
+      error: "internal_error",
+      message: err.message || "服务器内部错误"
+    });
+  }
 }
