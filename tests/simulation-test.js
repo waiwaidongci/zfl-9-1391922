@@ -311,6 +311,14 @@ async function runTests() {
 
     await handleSimulationDispatch(db, {
       tasks: [
+        { vessel: { name: "缺ID", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `缺少任务ID应返回400，实际=${capturedStatus}`);
+    assert(capturedData.errors.some((e) => e.code === "missing_id"), "包含missing_id错误");
+
+    await handleSimulationDispatch(db, {
+      tasks: [
         { id: "DUP-01", vessel: { name: "重复1", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" },
         { id: "DUP-01", vessel: { name: "重复2", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T14:00:00.000Z", end: "2026-06-14T17:00:00.000Z" }, requiredGrade: "B" }
       ]

@@ -149,18 +149,13 @@
         "end": "2026-06-14T13:00:00.000Z"
       },
       "requiredGrade": "A",
-      "status": "assigned",
-      "pilotId": "P-03",
+      "status": "pending",
+      "pilotId": null,
       "history": [
         {
           "at": "2026-06-13T20:00:00.000Z",
           "action": "created",
           "note": "北槽集装箱船任务"
-        },
-        {
-          "at": "2026-06-14T09:35:20.672Z",
-          "action": "assigned",
-          "note": "分配给周屿"
         }
       ]
     },

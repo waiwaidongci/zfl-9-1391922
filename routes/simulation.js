@@ -21,18 +21,18 @@ function validateSimTask(task, index, existingTaskIds, batchDupIndices) {
     return { valid: false, errors: [{ field: "row", message: `任务索引 ${index} 数据格式错误，应为对象`, code: "invalid_row_format" }] };
   }
 
-  if (task.id !== undefined && task.id !== null) {
-    if (typeof task.id !== "string") {
-      errors.push({ field: "id", message: `任务索引 ${index}: 任务ID必须为字符串，实际为 ${typeof task.id}`, code: "id_not_string" });
-    } else if (task.id.trim() === "") {
-      errors.push({ field: "id", message: `任务索引 ${index}: 任务ID不能为空白字符串`, code: "empty_id" });
-    } else if (!ID_PATTERN.test(task.id)) {
-      errors.push({ field: "id", message: `任务索引 ${index}: 任务ID格式无效: ${task.id}，仅允许字母、数字、下划线和连字符`, code: "invalid_id_format" });
-    } else if (task.id.length > 64) {
-      errors.push({ field: "id", message: `任务索引 ${index}: 任务ID长度不能超过64个字符`, code: "id_too_long" });
-    } else if (existingTaskIds.has(task.id)) {
-      errors.push({ field: "id", message: `任务索引 ${index}: 任务ID ${task.id} 与已有真实任务ID冲突`, code: "existing_id_conflict" });
-    }
+  if (task.id === undefined || task.id === null) {
+    errors.push({ field: "id", message: `任务索引 ${index}: 任务ID必填`, code: "missing_id" });
+  } else if (typeof task.id !== "string") {
+    errors.push({ field: "id", message: `任务索引 ${index}: 任务ID必须为字符串，实际为 ${typeof task.id}`, code: "id_not_string" });
+  } else if (task.id.trim() === "") {
+    errors.push({ field: "id", message: `任务索引 ${index}: 任务ID不能为空白字符串`, code: "empty_id" });
+  } else if (!ID_PATTERN.test(task.id)) {
+    errors.push({ field: "id", message: `任务索引 ${index}: 任务ID格式无效: ${task.id}，仅允许字母、数字、下划线和连字符`, code: "invalid_id_format" });
+  } else if (task.id.length > 64) {
+    errors.push({ field: "id", message: `任务索引 ${index}: 任务ID长度不能超过64个字符`, code: "id_too_long" });
+  } else if (existingTaskIds.has(task.id)) {
+    errors.push({ field: "id", message: `任务索引 ${index}: 任务ID ${task.id} 与已有真实任务ID冲突`, code: "existing_id_conflict" });
   }
 
   if (!task.tideWindow || typeof task.tideWindow !== "object" || Array.isArray(task.tideWindow)) {
