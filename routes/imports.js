@@ -50,10 +50,12 @@ export function handleImportPreview(db, input, send, res) {
   }
 
   const validRows = validation.validRows;
+  const duplicateIdRows = validation.duplicateIdRows || [];
+  const duplicateIdRowMap = new Map(duplicateIdRows.map((d) => [d.rowIndex, d]));
 
   let analysis = null;
   if (validRows.length > 0) {
-    analysis = analyzeImportBatch(db, validRows, rows);
+    analysis = analyzeImportBatch(db, validRows, rows, duplicateIdRowMap);
   }
 
   const rowErrors = validation.rowResults
@@ -73,10 +75,13 @@ export function handleImportPreview(db, input, send, res) {
 
   const conflictSummary = analysis?.conflictSummary || {
     totalConflictingTasks: 0,
+    totalUpdatableTasks: 0,
     byDistrict: [],
+    totalIdConflicts: duplicateIdRows.length,
     totalExistingConflicts: 0,
     totalBatchConflicts: 0,
-    canAutoCreate: validation.validCount,
+    canAutoCreate: validation.validCount - duplicateIdRows.length,
+    canAutoUpdate: duplicateIdRows.length,
     needsResolution: 0
   };
 
@@ -91,12 +96,15 @@ export function handleImportPreview(db, input, send, res) {
     rowErrors,
     rowWarnings,
     creatable: analysis?.creatable || [],
+    updatable: analysis?.updatable || [],
     conflicting: analysis?.conflicting || [],
     creatableCount: analysis?.creatableCount || 0,
+    updatableCount: analysis?.updatableCount || 0,
     conflictingCount: analysis?.conflictingCount || 0,
     conflictSummary,
     pilotSummary,
     duplicateIdsWithinBatch: validation.duplicateIdsWithinBatch || [],
+    duplicateIdRows,
     canConfirm: validation.validCount > 0
   };
 
@@ -278,6 +286,7 @@ export function handleImportSessionDetail(db, sessionId, send, res) {
     validCount: session.metadata.validCount,
     errorCount: session.metadata.errorCount,
     creatableCount: session.preview.creatableCount,
+    updatableCount: session.preview.updatableCount || 0,
     conflictingCount: session.preview.conflictingCount,
     canConfirm: session.preview.canConfirm,
     submittedAt: session.submittedAt || null,

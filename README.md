@@ -504,26 +504,40 @@ curl -X POST "http://localhost:3009/import/tasks" \
       "tideWindow": { "start": "2026-06-18T02:00:00.000Z", "end": "2026-06-18T05:00:00.000Z" },
       "topPilot": { "pilotId": "P-01", "name": "沈望", "score": 85.0 },
       "eligiblePilotCount": 2
-    },
+    }
+  ],
+  "updatable": [
     {
       "rowIndex": 1,
-      "taskId": "T-1718325600001-IJKL",
+      "taskId": "T-260614-01",
       "vesselName": "华星号",
       "district": "西港",
       "tideWindow": { "start": "2026-06-18T06:00:00.000Z", "end": "2026-06-18T09:00:00.000Z" },
       "topPilot": { "pilotId": "P-02", "name": "何澜", "score": 90.0 },
-      "eligiblePilotCount": 1
+      "eligiblePilotCount": 1,
+      "existingTask": {
+        "id": "T-260614-01",
+        "vesselName": "远泰7",
+        "district": "东港",
+        "tideWindow": { "start": "2026-06-14T02:30:00.000Z", "end": "2026-06-14T05:30:00.000Z" },
+        "status": "assigned",
+        "pilotId": "P-01"
+      }
     }
   ],
   "conflicting": [],
-  "creatableCount": 2,
+  "creatableCount": 1,
+  "updatableCount": 1,
   "conflictingCount": 0,
   "conflictSummary": {
     "totalConflictingTasks": 0,
+    "totalUpdatableTasks": 1,
     "byDistrict": [],
+    "totalIdConflicts": 1,
     "totalExistingConflicts": 0,
     "totalBatchConflicts": 0,
-    "canAutoCreate": 2,
+    "canAutoCreate": 1,
+    "canAutoUpdate": 1,
     "needsResolution": 0
   },
   "pilotSummary": {
@@ -533,7 +547,10 @@ curl -X POST "http://localhost:3009/import/tasks" \
     "busyPilots": 0,
     "pilots": []
   },
-  "duplicateIdsWithinBatch": []
+  "duplicateIdsWithinBatch": [],
+  "duplicateIdRows": [
+    { "rowIndex": 1, "id": "T-260614-01" }
+  ]
 }
 ```
 
@@ -722,7 +739,7 @@ curl "http://localhost:3009/import/sessions/IMP-1718325600000-A1B2C3D4"
   "cancelledAt": null,
   "submittedResults": [
     { "rowIndex": 0, "taskId": "T-1718325600000-EFGH", "status": "created", "success": true },
-    { "rowIndex": 1, "taskId": "T-1718325600001-IJKL", "status": "created", "success": true }
+    { "rowIndex": 1, "taskId": "T-260614-01", "status": "updated", "success": true }
   ]
 }
 ```
