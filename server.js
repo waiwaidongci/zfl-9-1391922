@@ -19,7 +19,7 @@ import {
   handleLeaveCancel
 } from "./routes/leaves.js";
 import { handleBoardOverview, handleBoardDistrict } from "./routes/board.js";
-import { handleImportPreview, handleImportConfirm, handleImportSessionDetail, handleImportSessionCancel } from "./routes/imports.js";
+import { handleImportPreview, handleImportConfirm, handleImportSessionDetail, handleImportSessionCancel, handleImportSessionList } from "./routes/imports.js";
 import { handleSimulationDispatch } from "./routes/simulation.js";
 import {
   handleAuditHistory,
@@ -53,7 +53,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/") {
       return send(res, 200, {
         service: "港口引航站申请和排班API",
-        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "POST /tasks/:id/rollback", "POST /tasks/:id/rollback/assign", "POST /tasks/:id/rollback/status", "GET /audit", "GET /audit/:id", "GET /audit/rollbackable/:objectType/:objectId", "GET /audit/rollbackable-types", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/preview", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel", "POST /simulation/dispatch"]
+        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "POST /tasks/:id/rollback", "POST /tasks/:id/rollback/assign", "POST /tasks/:id/rollback/status", "GET /audit", "GET /audit/:id", "GET /audit/rollbackable/:objectType/:objectId", "GET /audit/rollbackable-types", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/preview", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel", "POST /simulation/dispatch"]
       });
     }
 
@@ -259,6 +259,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/import/tasks/confirm") {
       const input = await body(req);
       return handleImportConfirm(db, input, send, res);
+    }
+
+    if (req.method === "GET" && url.pathname === "/import/sessions") {
+      return handleImportSessionList(db, url.searchParams, send, res);
     }
 
     const importSessionMatch = url.pathname.match(/^\/import\/sessions\/([^/]+)(?:\/([^/]+))?$/);

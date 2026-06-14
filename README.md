@@ -819,7 +819,111 @@ curl "http://localhost:3009/import/sessions/IMP-1718325600000-A1B2C3D4"
 
 ---
 
-### 4. 取消会话（POST /import/sessions/:sessionId/cancel）
+### 4. 查询会话列表（GET /import/sessions）
+
+支持按状态筛选和分页查询所有导入会话摘要，返回创建时间、过期时间、有效/错误行数、提交/取消状态等信息。
+
+```bash
+# 查询所有会话（默认 limit=20, offset=0）
+curl "http://localhost:3009/import/sessions"
+
+# 按状态筛选（previewed / submitted / cancelled）
+curl "http://localhost:3009/import/sessions?status=previewed"
+curl "http://localhost:3009/import/sessions?status=submitted"
+curl "http://localhost:3009/import/sessions?status=cancelled"
+
+# 分页查询
+curl "http://localhost:3009/import/sessions?limit=10&offset=0"
+curl "http://localhost:3009/import/sessions?limit=5&offset=10"
+
+# 组合查询：已提交状态 + 分页
+curl "http://localhost:3009/import/sessions?status=submitted&limit=20&offset=0"
+```
+
+**返回示例（200 OK）**：
+
+```json
+{
+  "total": 3,
+  "offset": 0,
+  "limit": 20,
+  "sessions": [
+    {
+      "id": "IMP-1718325900000-C3D4E5F6",
+      "createdAt": "2026-06-14T09:25:00.000Z",
+      "expiresAt": "2026-06-14T09:55:00.000Z",
+      "status": "submitted",
+      "rowCount": 5,
+      "validCount": 4,
+      "errorCount": 1,
+      "submittedAt": "2026-06-14T09:26:00.000Z",
+      "cancelledAt": null
+    },
+    {
+      "id": "IMP-1718325600000-A1B2C3D4",
+      "createdAt": "2026-06-14T09:00:00.000Z",
+      "expiresAt": "2026-06-14T09:30:00.000Z",
+      "status": "cancelled",
+      "rowCount": 3,
+      "validCount": 2,
+      "errorCount": 1,
+      "submittedAt": null,
+      "cancelledAt": "2026-06-14T09:10:00.000Z"
+    },
+    {
+      "id": "IMP-1718325300000-Z9Y8X7W6",
+      "createdAt": "2026-06-14T08:55:00.000Z",
+      "expiresAt": "2026-06-14T09:25:00.000Z",
+      "status": "previewed",
+      "rowCount": 10,
+      "validCount": 10,
+      "errorCount": 0,
+      "submittedAt": null,
+      "cancelledAt": null
+    }
+  ]
+}
+```
+
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `status` | string | 否 | 按状态筛选：`previewed`（已预检待提交）/ `submitted`（已提交）/ `cancelled`（已取消） |
+| `limit` | number | 否 | 每页条数，默认 20，范围 1~200 |
+| `offset` | number | 否 | 偏移量，默认 0，必须为非负整数 |
+
+**响应字段（sessions 数组每项）**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 会话ID |
+| `createdAt` | string(ISO) | 创建时间 |
+| `expiresAt` | string(ISO) | 过期时间（30分钟） |
+| `status` | string | 会话状态：`previewed` / `submitted` / `cancelled` |
+| `rowCount` | number | 总行数 |
+| `validCount` | number | 有效行数 |
+| `errorCount` | number | 错误行数 |
+| `submittedAt` | string(ISO) \| null | 提交时间（仅 submitted 状态有值） |
+| `cancelledAt` | string(ISO) \| null | 取消时间（仅 cancelled 状态有值） |
+
+**参数错误返回示例（400）**：
+
+```json
+{
+  "error": "invalid_params",
+  "message": "查询参数无效",
+  "errors": [
+    { "field": "status", "message": "无效的会话状态: xxx，有效值: previewed, submitted, cancelled", "code": "invalid_status" },
+    { "field": "limit", "message": "limit 必须为 1~200 之间的整数", "code": "invalid_limit" },
+    { "field": "offset", "message": "offset 必须为非负整数", "code": "invalid_offset" }
+  ]
+}
+```
+
+---
+
+### 5. 取消会话（POST /import/sessions/:sessionId/cancel）
 
 ```bash
 curl -X POST "http://localhost:3009/import/sessions/IMP-1718325600000-A1B2C3D4/cancel"
@@ -872,7 +976,7 @@ curl -X POST "http://localhost:3009/import/sessions/IMP-1718325600000-A1B2C3D4/c
 
 ---
 
-### 完整调用示例
+### 8. 完整调用示例
 
 ```bash
 # 步骤1：预检

@@ -1,7 +1,7 @@
 import { saveDb } from "../utils/db.js";
 import { validateTaskBatch, buildTaskFromRow } from "../utils/validator.js";
 import { analyzeImportBatch } from "../services/candidate-reuse.js";
-import { createImportSession, getImportSession, updateImportSession, cancelImportSession } from "../services/import-session.js";
+import { createImportSession, getImportSession, updateImportSession, cancelImportSession, listImportSessions } from "../services/import-session.js";
 import { DEFAULT_TASK_STATUS } from "../config/scheduling-rules.js";
 import { recordAuditEvent, AUDIT_OBJECT_TYPES, AUDIT_ACTIONS } from "../services/audit.js";
 
@@ -351,4 +351,72 @@ export function handleImportSessionCancel(db, sessionId, send, res) {
     cancelledAt: result.cancelledAt,
     message: "导入会话已取消"
   }));
+}
+
+const VALID_SESSION_STATUSES = ["previewed", "submitted", "cancelled"];
+
+export function validateSessionListParams(searchParams) {
+  const errors = [];
+  const params = {};
+
+  const status = searchParams.get("status");
+  if (status !== null && status !== undefined && status !== "") {
+    if (!VALID_SESSION_STATUSES.includes(status)) {
+      errors.push({
+        field: "status",
+        message: `无效的会话状态: ${status}，有效值: ${VALID_SESSION_STATUSES.join(", ")}`,
+        code: "invalid_status"
+      });
+    } else {
+      params.status = status;
+    }
+  }
+
+  const limitRaw = searchParams.get("limit");
+  if (limitRaw !== null && limitRaw !== undefined && limitRaw !== "") {
+    const limit = Number(limitRaw);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      errors.push({
+        field: "limit",
+        message: "limit 必须为 1~200 之间的整数",
+        code: "invalid_limit"
+      });
+    } else {
+      params.limit = limit;
+    }
+  }
+
+  const offsetRaw = searchParams.get("offset");
+  if (offsetRaw !== null && offsetRaw !== undefined && offsetRaw !== "") {
+    const offset = Number(offsetRaw);
+    if (!Number.isInteger(offset) || offset < 0) {
+      errors.push({
+        field: "offset",
+        message: "offset 必须为非负整数",
+        code: "invalid_offset"
+      });
+    } else {
+      params.offset = offset;
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    params
+  };
+}
+
+export function handleImportSessionList(db, searchParams, send, res) {
+  const validation = validateSessionListParams(searchParams);
+  if (!validation.valid) {
+    return send(res, 400, {
+      error: "invalid_params",
+      message: "查询参数无效",
+      errors: validation.errors
+    });
+  }
+
+  const result = listImportSessions(validation.params);
+  return send(res, 200, result);
 }
