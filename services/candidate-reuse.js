@@ -3,7 +3,7 @@ import { overlaps } from "../utils/time.js";
 import { buildTaskFromRow } from "../utils/validator.js";
 import { DEFAULT_TASK_STATUS } from "../config/scheduling-rules.js";
 
-function findConflictingExistingTasks(db, task) {
+export function findConflictingExistingTasks(db, task) {
   const conflicts = [];
   for (const existing of db.tasks) {
     if (existing.status === "cancelled" || existing.status === "completed" || existing.status === "done") continue;
@@ -77,7 +77,7 @@ function suggestResolution(conflict) {
   };
 }
 
-function recommendForTask(db, task, limit = 3) {
+export function recommendForTask(db, task, limit = 3) {
   const candidates = db.pilots.map((pilot) => evaluateCandidate(db, pilot, task));
   candidates.sort((a, b) => {
     if (b.eligible !== a.eligible) return b.eligible ? 1 : -1;

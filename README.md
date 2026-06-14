@@ -962,6 +962,210 @@ curl "http://localhost:3009/shifts/calendar?date=2026-06-14&district=东港"
 
 ---
 
+## 草稿预览与提交模块
+
+草稿支持在正式提交为任务前进行预览预检，返回字段完整性、候选引航员摘要、休假冲突和同港区时间重叠提示。预览接口是**只读**的，不会写入任务或删除草稿，提交接口行为保持不变。
+
+### 核心流程
+
+```
+POST /drafts/:id/preview (只读预检) ──→ 返回字段完整性、推荐引航员、冲突提示
+           │
+           ▼
+     调度员审查预检结果
+           │
+           ├── POST /drafts/:id/submit (正式提交)
+           │       └── 写入任务，删除草稿（原有行为不变）
+           │
+           └── PUT /drafts/:id (继续编辑)
+                   └── 更新草稿内容
+```
+
+### 关键规则
+
+- **预览不写数据**：`POST /drafts/:id/preview` 仅在内存中分析，绝不修改 `data/pilot-station.json`
+- **不删除草稿**：预览后草稿仍保留在 `db.drafts` 中，只有调用 `submit` 才会删除
+- **提交接口不变**：`POST /drafts/:id/submit` 行为与之前完全一致
+- **字段不完整时跳过冲突检查**：缺少必填字段时仅返回完整性提示，不执行引航员推荐和冲突检测
+
+---
+
+### 1. 草稿预览（POST /drafts/:id/preview）
+
+对草稿内容进行预检，返回四类信息：字段完整性、候选引航员推荐与合格情况、同港区时间重叠、引航员休假冲突。
+
+```bash
+curl -X POST "http://localhost:3009/drafts/D-260614-01/preview"
+```
+
+**返回示例（200 OK - 完整草稿）**：
+
+```json
+{
+  "draftId": "D-260614-01",
+  "previewedAt": "2026-06-14T10:00:00.000Z",
+  "canSubmit": true,
+  "fieldCompleteness": {
+    "complete": true,
+    "missingFields": [],
+    "requiredFields": ["vessel", "district", "berthPlan", "tideWindow", "requiredGrade"],
+    "fieldStatus": {
+      "vessel": { "present": true, "detail": { "hasName": true, "hasType": true } },
+      "district": { "present": true },
+      "berthPlan": { "present": true },
+      "tideWindow": { "present": true, "detail": { "hasStart": true, "hasEnd": true } },
+      "requiredGrade": { "present": true }
+    }
+  },
+  "pilotRecommendation": {
+    "totalEligible": 2,
+    "totalIneligible": 3,
+    "recommendations": [
+      { "pilotId": "P-02", "name": "何澜", "score": 92.5, "disqualifying": [] },
+      { "pilotId": "P-05", "name": "郑涵", "score": 85.0, "disqualifying": [] },
+      { "pilotId": "P-03", "name": "周屿", "score": 78.0, "disqualifying": [] }
+    ],
+    "topRecommendation": { "pilotId": "P-02", "name": "何澜", "score": 92.5 }
+  },
+  "pilotEligibility": {
+    "totalPilots": 5,
+    "eligiblePilots": 2,
+    "ineligiblePilots": 3,
+    "breakdown": [
+      { "pilotId": "P-01", "name": "沈望", "eligible": false, "score": 0, "disqualifying": ["ship_type_mismatch", "leave_conflict"] },
+      { "pilotId": "P-02", "name": "何澜", "eligible": true, "score": 92.5, "disqualifying": [] }
+    ]
+  },
+  "timeOverlapConflicts": [
+    {
+      "taskId": "T-260614-03",
+      "vesselName": "远泰9",
+      "district": "西港",
+      "tideWindow": { "start": "2026-06-15T06:00:00.000Z", "end": "2026-06-15T09:00:00.000Z" },
+      "status": "pending",
+      "pilotId": null,
+      "berthPlan": "靠泊W1",
+      "conflictType": "district_time"
+    }
+  ],
+  "leaveConflicts": [
+    {
+      "pilotId": "P-01",
+      "pilotName": "沈望",
+      "leaveId": "L-260614-01",
+      "leaveType": "vacation",
+      "leavePeriod": { "start": "2026-06-16T00:00:00.000Z", "end": "2026-06-18T12:00:00.000Z" },
+      "leaveReason": "年度年休假"
+    }
+  ],
+  "warnings": [
+    { "code": "district_time_overlap", "message": "与 1 个同港区活跃任务存在时间重叠", "severity": "warning" },
+    { "code": "pilot_leave_conflict", "message": "1 名引航员在此任务窗口内有休假", "severity": "warning" }
+  ]
+}
+```
+
+**返回示例（200 OK - 不完整草稿）**：
+
+```json
+{
+  "draftId": "D-260614-02",
+  "previewedAt": "2026-06-14T10:00:00.000Z",
+  "canSubmit": false,
+  "fieldCompleteness": {
+    "complete": false,
+    "missingFields": ["berthPlan", "tideWindow.start/end"],
+    "requiredFields": ["vessel", "district", "berthPlan", "tideWindow", "requiredGrade"],
+    "fieldStatus": {
+      "vessel": { "present": true, "detail": { "hasName": true, "hasType": true } },
+      "district": { "present": true },
+      "berthPlan": { "present": false },
+      "tideWindow": { "present": false, "detail": { "hasStart": false, "hasEnd": false } },
+      "requiredGrade": { "present": true }
+    }
+  },
+  "pilotRecommendation": { "totalEligible": 0, "totalIneligible": 0, "recommendations": [], "topRecommendation": null },
+  "pilotEligibility": { "totalPilots": 5, "eligiblePilots": 0, "ineligiblePilots": 5, "breakdown": [] },
+  "timeOverlapConflicts": [],
+  "leaveConflicts": [],
+  "warnings": [
+    { "code": "incomplete_fields", "message": "草稿缺少 2 个必填字段", "severity": "error" }
+  ]
+}
+```
+
+**草稿不存在返回示例（404）**：
+
+```json
+{ "error": "draft_not_found" }
+```
+
+---
+
+### 响应字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `draftId` | string | 草稿ID |
+| `previewedAt` | string(ISO) | 预览生成时间 |
+| `canSubmit` | boolean | 是否满足提交条件（等同于字段完整） |
+| `fieldCompleteness.complete` | boolean | 所有必填字段是否完整 |
+| `fieldCompleteness.missingFields` | string[] | 缺失的字段名列表 |
+| `fieldCompleteness.requiredFields` | string[] | 必填字段清单（常量） |
+| `fieldCompleteness.fieldStatus` | object | 每个必填字段的详细状态 |
+| `pilotRecommendation` | object | Top 3 候选引航员推荐（复用批量导入推荐逻辑） |
+| `pilotRecommendation.totalEligible` | number | 符合全部条件的引航员总数 |
+| `pilotRecommendation.recommendations` | array | 推荐列表（最多3个，按综合评分降序） |
+| `pilotRecommendation.topRecommendation` | object | 评分最高的引航员（可直接用作派单建议） |
+| `pilotEligibility` | object | 全体引航员合格情况明细 |
+| `pilotEligibility.breakdown[]` | object | 每位引航员的合格状态、评分、不合格原因 |
+| `timeOverlapConflicts` | array | 同港区且潮汐窗口重叠的活跃任务列表 |
+| `timeOverlapConflicts[].conflictType` | string | `district_time`（未分配）或 `pilot_assigned`（已分配） |
+| `leaveConflicts` | array | 任务窗口内有休假记录的引航员列表 |
+| `warnings` | array | 汇总提示，含 `code`、`message`、`severity`(warning/error) |
+
+---
+
+### 警告代码说明
+
+| code | severity | 说明 |
+|------|----------|------|
+| `incomplete_fields` | error | 必填字段缺失，阻断提交 |
+| `district_time_overlap` | warning | 同港区活跃任务时间重叠，提醒调度协调 |
+| `pilot_leave_conflict` | warning | 有引航员在此窗口休假，可能影响派单 |
+
+---
+
+### 2. 提交草稿（POST /drafts/:id/submit）
+
+**原有接口行为保持不变**。字段完整时提交成功（创建任务并删除草稿），不完整时返回 422。
+
+```bash
+curl -X POST "http://localhost:3009/drafts/D-260614-01/submit" \
+  -H "Content-Type: application/json" \
+  -d '{ "operator": "调度员小王", "note": "预检完成，确认提交" }'
+```
+
+---
+
+### 完整调用示例
+
+```bash
+# 步骤1：预览草稿预检结果
+curl -X POST "http://localhost:3009/drafts/D-260614-01/preview"
+
+# 步骤2：如 canSubmit=true 且无不可接受的冲突，执行提交
+curl -X POST "http://localhost:3009/drafts/D-260614-01/submit" \
+  -H "Content-Type: application/json" \
+  -d '{ "operator": "调度员小王" }'
+
+# 步骤3：确认草稿已删除（可选）
+curl "http://localhost:3009/drafts/D-260614-01"
+# → 404 { "error": "draft_not_found" }
+```
+
+---
+
 ## 审计追踪与回滚模块
 
 所有写操作（引航员、任务、派单、状态更新、审批、导入提交等）都会记录成统一审计事件，支持按对象ID查询审计历史，并支持任务状态更新和派单的回滚。

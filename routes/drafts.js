@@ -1,10 +1,11 @@
 import { saveDb } from "../utils/db.js";
 import { DEFAULT_TASK_STATUS } from "../config/scheduling-rules.js";
 import { recordAuditEvent, AUDIT_OBJECT_TYPES, AUDIT_ACTIONS } from "../services/audit.js";
+import { previewDraft } from "../services/draft-preview.js";
 
-const REQUIRED_TASK_FIELDS = ["vessel", "district", "berthPlan", "tideWindow", "requiredGrade"];
+export const REQUIRED_TASK_FIELDS = ["vessel", "district", "berthPlan", "tideWindow", "requiredGrade"];
 
-function validateDraftForSubmit(draft) {
+export function validateDraftForSubmit(draft) {
   const missing = [];
   for (const field of REQUIRED_TASK_FIELDS) {
     if (draft[field] === undefined || draft[field] === null || draft[field] === "") {
@@ -128,4 +129,11 @@ export function handleDraftSubmit(db, id, input, send, res) {
       });
     }).then(() => send(res, 201, { submitted: draft.id, task }));
   });
+}
+
+export function handleDraftPreview(db, id, send, res) {
+  const draft = db.drafts.find((d) => d.id === id);
+  if (!draft) return send(res, 404, { error: "draft_not_found" });
+  const result = previewDraft(db, draft);
+  return send(res, 200, result);
 }
