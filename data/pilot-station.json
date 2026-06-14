@@ -106,6 +106,20 @@
           "end": "2026-06-15T00:00:00.000Z"
         }
       ]
+    },
+    {
+      "id": "P-TEST",
+      "name": "测试引航员",
+      "districts": [
+        "东港"
+      ],
+      "shipTypes": [
+        "散货船"
+      ],
+      "grades": [
+        "B"
+      ],
+      "shifts": []
     }
   ],
   "tasks": [
@@ -156,6 +170,16 @@
           "at": "2026-06-13T20:00:00.000Z",
           "action": "created",
           "note": "北槽集装箱船任务"
+        },
+        {
+          "at": "2026-06-14T10:03:51.101Z",
+          "action": "assigned",
+          "note": "分配给沈望"
+        },
+        {
+          "at": "2026-06-14T10:04:31.373Z",
+          "action": "unassigned",
+          "note": "测试回滚派单"
         }
       ]
     },
@@ -181,6 +205,16 @@
           "at": "2026-06-13T22:29:06.400Z",
           "action": "created",
           "note": "西港油轮任务"
+        },
+        {
+          "at": "2026-06-14T10:04:59.376Z",
+          "action": "in_progress",
+          "note": "开始作业中"
+        },
+        {
+          "at": "2026-06-14T10:05:22.288Z",
+          "action": "rollback_status",
+          "note": "测试状态回滚"
         }
       ]
     },
@@ -231,6 +265,31 @@
           "at": "2026-06-14T09:30:00.000Z",
           "action": "created",
           "note": "北槽集装箱船任务 - 用于验证P-04临时停用冲突"
+        }
+      ]
+    },
+    {
+      "id": "T-1781431313740",
+      "vessel": {
+        "name": "测试船",
+        "type": "散货船",
+        "imo": "IMO1234567",
+        "length": 200
+      },
+      "district": "东港",
+      "berthPlan": "靠泊D1",
+      "tideWindow": {
+        "start": "2026-06-20T02:00:00.000Z",
+        "end": "2026-06-20T05:00:00.000Z"
+      },
+      "requiredGrade": "B",
+      "status": "pending",
+      "pilotId": null,
+      "history": [
+        {
+          "at": "2026-06-14T10:01:53.740Z",
+          "action": "created",
+          "note": "测试审计功能"
         }
       ]
     }

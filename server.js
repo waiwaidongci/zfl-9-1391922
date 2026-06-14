@@ -21,6 +21,16 @@ import {
 import { handleBoardOverview, handleBoardDistrict } from "./routes/board.js";
 import { handleImportPreview, handleImportConfirm, handleImportSessionDetail, handleImportSessionCancel } from "./routes/imports.js";
 import { handleSimulationDispatch } from "./routes/simulation.js";
+import {
+  handleAuditHistory,
+  handleAuditEventDetail,
+  handleAuditLatestRollbackable,
+  handleTaskRollback,
+  handleTaskRollbackAssign,
+  handleTaskRollbackStatus,
+  handleRollbackableTypes
+} from "./routes/audit.js";
+import { recordAuditEvent, AUDIT_OBJECT_TYPES, AUDIT_ACTIONS } from "./services/audit.js";
 
 const port = Number(process.env.PORT || 3009);
 
@@ -43,7 +53,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/") {
       return send(res, 200, {
         service: "港口引航站申请和排班API",
-        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel", "POST /simulation/dispatch"]
+        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "POST /tasks/:id/rollback", "POST /tasks/:id/rollback/assign", "POST /tasks/:id/rollback/status", "GET /audit", "GET /audit/:id", "GET /audit/rollbackable/:objectType/:objectId", "GET /audit/rollbackable-types", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel", "POST /simulation/dispatch"]
       });
     }
 
@@ -76,6 +86,15 @@ const server = http.createServer(async (req, res) => {
       const pilot = { id: input.id || `P-${Date.now()}`, name: input.name, districts: input.districts || [], shipTypes: input.shipTypes || [], grades: input.grades || [], shifts: input.shifts || [] };
       db.pilots.push(pilot);
       await saveDb(db);
+      await recordAuditEvent({
+        objectType: AUDIT_OBJECT_TYPES.PILOT,
+        objectId: pilot.id,
+        action: AUDIT_ACTIONS.CREATE,
+        after: pilot,
+        operator: input.operator || null,
+        note: input.note || "新增引航员",
+        rollbackable: false
+      });
       return send(res, 201, pilot);
     }
 
@@ -112,6 +131,48 @@ const server = http.createServer(async (req, res) => {
         const input = await body(req);
         return handleTaskStatus(db, task, input, send, res);
       }
+
+      if (req.method === "POST" && action === "rollback") {
+        const input = await body(req);
+        return handleTaskRollback(db, id, input, send, res);
+      }
+    }
+
+    const taskRollbackMatch = url.pathname.match(/^\/tasks\/([^/]+)\/rollback\/([^/]+)$/);
+    if (taskRollbackMatch) {
+      const [, taskId, rollbackAction] = taskRollbackMatch;
+      const task = db.tasks.find((item) => item.id === taskId);
+      if (!task) return send(res, 404, { error: "task_not_found" });
+
+      if (req.method === "POST" && rollbackAction === "assign") {
+        const input = await body(req);
+        return handleTaskRollbackAssign(db, taskId, input, send, res);
+      }
+
+      if (req.method === "POST" && rollbackAction === "status") {
+        const input = await body(req);
+        return handleTaskRollbackStatus(db, taskId, input, send, res);
+      }
+    }
+
+    if (req.method === "GET" && url.pathname === "/audit") {
+      return handleAuditHistory(db, url.searchParams, send, res);
+    }
+
+    if (req.method === "GET" && url.pathname === "/audit/rollbackable-types") {
+      return handleRollbackableTypes(send, res);
+    }
+
+    const auditRollbackableMatch = url.pathname.match(/^\/audit\/rollbackable\/([^/]+)\/([^/]+)$/);
+    if (auditRollbackableMatch && req.method === "GET") {
+      const [, objectType, objectId] = auditRollbackableMatch;
+      return handleAuditLatestRollbackable(db, decodeURIComponent(objectType), decodeURIComponent(objectId), send, res);
+    }
+
+    const auditMatch = url.pathname.match(/^\/audit\/([^/]+)$/);
+    if (auditMatch && req.method === "GET") {
+      const [, auditId] = auditMatch;
+      return handleAuditEventDetail(db, auditId, send, res);
     }
 
     if (req.method === "POST" && url.pathname === "/drafts") {

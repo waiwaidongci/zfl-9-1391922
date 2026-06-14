@@ -886,3 +886,224 @@ curl "http://localhost:3009/shifts/calendar?date=2026-06-14&district=东港"
   ]
 }
 ```
+
+---
+
+## 审计追踪与回滚模块
+
+所有写操作（引航员、任务、派单、状态更新、审批、导入提交等）都会记录成统一审计事件，支持按对象ID查询审计历史，并支持任务状态更新和派单的回滚。
+
+### 数据模型
+
+审计事件（audit event）存储在 `data/audit-log.json`，结构如下：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | string | 审计事件ID，如 `AUD-xxxx` |
+| `objectType` | string | 对象类型：`pilot` / `task` / `changeRequest` / `draft` / `leaveRecord` / `importSession` |
+| `objectId` | string | 对象ID |
+| `action` | string | 操作类型：`create` / `update` / `assign` / `unassign` / `status_change` / `approve` / `reject` / `submit` / `cancel` / `rollback` / `import_create` / `import_update` |
+| `before` | object | 操作前数据快照（可为 null） |
+| `after` | object | 操作后数据快照（可为 null） |
+| `operator` | string | 操作人（可为 null） |
+| `note` | string | 备注 |
+| `rollbackable` | boolean | 是否可回滚 |
+| `relatedAuditId` | string | 关联审计事件ID（如回滚关联原事件） |
+| `timestamp` | string | 时间戳（ISO 8601） |
+
+---
+
+### 1. 查询审计历史
+
+支持按对象ID、对象类型、操作类型筛选，支持分页。
+
+```bash
+# 查询所有审计记录
+curl "http://localhost:3009/audit"
+
+# 按任务ID查询
+curl "http://localhost:3009/audit?objectId=T-260614-01"
+
+# 按对象类型查询
+curl "http://localhost:3009/audit?objectType=task"
+
+# 按操作类型查询
+curl "http://localhost:3009/audit?action=assign"
+
+# 分页查询
+curl "http://localhost:3009/audit?limit=20&offset=0"
+```
+
+**返回示例**：
+
+```json
+{
+  "total": 5,
+  "offset": 0,
+  "limit": 50,
+  "events": [
+    {
+      "id": "AUD-1718325600000-ABC123",
+      "objectType": "task",
+      "objectId": "T-260614-01",
+      "action": "assign",
+      "before": { "id": "T-260614-01", "status": "pending", "pilotId": null },
+      "after": { "id": "T-260614-01", "status": "assigned", "pilotId": "P-01" },
+      "operator": "调度员小王",
+      "note": "分配给沈望",
+      "rollbackable": true,
+      "relatedAuditId": null,
+      "timestamp": "2026-06-14T03:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### 2. 查询单个审计事件详情
+
+```bash
+curl "http://localhost:3009/audit/AUD-1718325600000-ABC123"
+```
+
+---
+
+### 3. 获取可回滚类型
+
+```bash
+curl "http://localhost:3009/audit/rollbackable-types"
+```
+
+**返回示例**：
+
+```json
+{
+  "objectTypes": ["pilot", "task", "changeRequest", "draft", "leaveRecord", "importSession"],
+  "actions": ["create", "update", "assign", "unassign", "status_change", "approve", "reject", "submit", "cancel", "rollback", "import_create", "import_update"],
+  "rollbackableTypes": [
+    { "action": "assign", "objectType": "task", "description": "任务派单" },
+    { "action": "status_change", "objectType": "task", "description": "任务状态更新" },
+    { "action": "update", "objectType": "task", "description": "任务信息更新" }
+  ]
+}
+```
+
+---
+
+### 4. 查询对象最新可回滚事件
+
+```bash
+curl "http://localhost:3009/audit/rollbackable/task/T-260614-01"
+```
+
+返回该对象最近的一条可回滚审计事件，没有则返回 404。
+
+---
+
+### 5. 任务回滚
+
+#### 5.1 回滚到上一版本
+
+自动找到最近的可回滚事件并回滚：
+
+```bash
+curl -X POST "http://localhost:3009/tasks/T-260614-01/rollback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operator": "值班主任老李",
+    "note": "操作失误，需要回滚"
+  }'
+```
+
+**返回示例（200 OK）**：
+
+```json
+{
+  "success": true,
+  "task": {
+    "id": "T-260614-01",
+    "status": "pending",
+    "pilotId": null
+  },
+  "rollbackEvent": {
+    "id": "AUD-xxxx",
+    "action": "rollback",
+    "objectType": "task",
+    "objectId": "T-260614-01",
+    "rollbackable": false,
+    "relatedAuditId": "AUD-yyyy",
+    "timestamp": "..."
+  },
+  "rolledBackFrom": {
+    "id": "AUD-yyyy",
+    "action": "assign",
+    "rollbackable": true
+  }
+}
+```
+
+#### 5.2 回滚指定审计事件
+
+指定要回滚到的审计事件ID：
+
+```bash
+curl -X POST "http://localhost:3009/tasks/T-260614-01/rollback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "auditEventId": "AUD-1718325600000-ABC123",
+    "operator": "值班主任老李"
+  }'
+```
+
+#### 5.3 回滚派单（专用接口）
+
+专门用于取消派单，将任务状态重置为 pending，引航员置空：
+
+```bash
+curl -X POST "http://localhost:3009/tasks/T-260614-01/rollback/assign" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operator": "值班主任老李",
+    "note": "引航员临时有事，取消分配"
+  }'
+```
+
+#### 5.4 回滚状态更新（专用接口）
+
+专门用于回滚最近一次状态变更：
+
+```bash
+curl -X POST "http://localhost:3009/tasks/T-260614-01/rollback/status" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operator": "值班主任老李",
+    "note": "状态更新有误"
+  }'
+```
+
+---
+
+### 回滚说明
+
+- **回滚本身也会写入审计事件**，动作类型为 `rollback`，且 `rollbackable` 为 `false`（不可回滚的回滚）
+- 回滚事件会通过 `relatedAuditId` 关联被回滚的原审计事件
+- 任务的 `history` 字段也会追加回滚记录
+- 目前支持回滚的操作类型：任务派单（`assign`）、任务状态更新（`status_change`）、任务信息更新（`update`）
+
+---
+
+### 审计覆盖的写操作
+
+| 操作 | 对象类型 | 动作类型 | 可回滚 |
+|------|----------|----------|--------|
+| 新增引航员 | pilot | create | 否 |
+| 创建任务 | task | create | 否 |
+| 任务派单 | task | assign | 是 |
+| 任务状态更新 | task | status_change | 是 |
+| 任务信息更新 | task | update | 是 |
+| 创建变更申请 | changeRequest | create | 否 |
+| 变更审批通过 | changeRequest / task | approve / update | 任务更新可回滚 |
+| 变更审批驳回 | changeRequest | reject | 否 |
+| 批量导入创建 | task | import_create | 否 |
+| 批量导入更新 | task | import_update | 否 |

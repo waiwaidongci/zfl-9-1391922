@@ -3,6 +3,7 @@ import { validateTaskBatch, buildTaskFromRow } from "../utils/validator.js";
 import { analyzeImportBatch } from "../services/candidate-reuse.js";
 import { createImportSession, getImportSession, updateImportSession, cancelImportSession } from "../services/import-session.js";
 import { DEFAULT_TASK_STATUS } from "../config/scheduling-rules.js";
+import { recordAuditEvent, AUDIT_OBJECT_TYPES, AUDIT_ACTIONS } from "../services/audit.js";
 
 function addHistory(task, action, note) {
   task.history.push({ at: new Date().toISOString(), action, note });
@@ -259,16 +260,36 @@ export function handleImportConfirm(db, input, send, res) {
     submittedAt
   });
 
-  return saveDb(db).then(() => send(res, 200, {
-    sessionId,
-    submittedAt,
-    totalRequested: rowIndicesToSubmit.length,
-    successCount,
-    createdCount,
-    updatedCount,
-    failedCount,
-    results
-  }));
+  return saveDb(db).then(async () => {
+    for (const result of results) {
+      if (result.success) {
+        const task = db.tasks.find((t) => t.id === result.taskId);
+        if (task) {
+          const isUpdate = result.status === "updated";
+          await recordAuditEvent({
+            objectType: AUDIT_OBJECT_TYPES.TASK,
+            objectId: task.id,
+            action: isUpdate ? AUDIT_ACTIONS.IMPORT_UPDATE : AUDIT_ACTIONS.IMPORT_CREATE,
+            after: task,
+            operator: null,
+            note: `批量导入${isUpdate ? "更新" : "创建"}任务 - 会话: ${sessionId}`,
+            rollbackable: false
+          });
+        }
+      }
+    }
+
+    return send(res, 200, {
+      sessionId,
+      submittedAt,
+      totalRequested: rowIndicesToSubmit.length,
+      successCount,
+      createdCount,
+      updatedCount,
+      failedCount,
+      results
+    });
+  });
 }
 
 export function handleImportSessionDetail(db, sessionId, send, res) {

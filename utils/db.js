@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dbPath = join(__dirname, "..", "data", "pilot-station.json");
+const auditLogPath = join(__dirname, "..", "data", "audit-log.json");
+
+const auditSeed = {
+  events: []
+};
 
 const seed = {
   pilots: [
@@ -171,4 +176,18 @@ export function cancelLeaveRecord(db, recordId, note) {
 
 export function getLeaveRecord(db, recordId) {
   return db.leaveRecords.find((r) => r.id === recordId) || null;
+}
+
+export async function loadAuditLog() {
+  if (!existsSync(auditLogPath)) {
+    await mkdir(dirname(auditLogPath), { recursive: true });
+    await writeFile(auditLogPath, JSON.stringify(auditSeed, null, 2));
+  }
+  const auditLog = JSON.parse(await readFile(auditLogPath, "utf8"));
+  if (!auditLog.events) auditLog.events = [];
+  return auditLog;
+}
+
+export async function saveAuditLog(auditLog) {
+  await writeFile(auditLogPath, JSON.stringify(auditLog, null, 2));
 }

@@ -2,6 +2,7 @@ import { saveDb } from "../utils/db.js";
 import { DEFAULT_CHANGE_REQUEST_STATUS, ASSIGNED_TASK_STATUS } from "../config/scheduling-rules.js";
 import { isValidChangeRequestType, CHANGE_REQUEST_TYPES, isActiveTaskStatus } from "../config/scheduling-rules.js";
 import { overlaps as timeOverlaps } from "../utils/time.js";
+import { recordAuditEvent, AUDIT_OBJECT_TYPES, AUDIT_ACTIONS } from "../services/audit.js";
 
 function addHistory(task, action, note) {
   task.history.push({ at: new Date().toISOString(), action, note });
@@ -147,7 +148,17 @@ export function handleChangeRequestCreate(db, taskId, input, send, res) {
     reviewedAt: null
   };
   db.changeRequests.push(cr);
-  return saveDb(db).then(() => send(res, 201, cr));
+  return saveDb(db).then(() => {
+    return recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.CHANGE_REQUEST,
+      objectId: cr.id,
+      action: AUDIT_ACTIONS.CREATE,
+      after: cr,
+      operator: input.applicant || null,
+      note: input.note || "创建变更申请",
+      rollbackable: false
+    }).then(() => send(res, 201, cr));
+  });
 }
 
 export function handleChangeRequestRecheck(db, id, send, res) {
@@ -172,6 +183,9 @@ export function handleChangeRequestApprove(db, id, input, send, res) {
   const latestConflictCheck = checkConflicts(db, task, cr.proposed, cr.id);
   cr.conflictCheck = latestConflictCheck;
 
+  const beforeTaskSnapshot = JSON.parse(JSON.stringify(task));
+  const beforeCrSnapshot = JSON.parse(JSON.stringify(cr));
+
   if (cr.proposed.tideWindow) {
     const old = task.tideWindow ? `${task.tideWindow.start}~${task.tideWindow.end}` : "无";
     const nw = `${cr.proposed.tideWindow.start}~${cr.proposed.tideWindow.end}`;
@@ -191,7 +205,29 @@ export function handleChangeRequestApprove(db, id, input, send, res) {
   cr.reviewedAt = new Date().toISOString();
   cr.approver = input && input.approver ? input.approver : null;
 
-  return saveDb(db).then(() => send(res, 200, { changeRequest: cr, task }));
+  return saveDb(db).then(() => {
+    return recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.CHANGE_REQUEST,
+      objectId: cr.id,
+      action: AUDIT_ACTIONS.APPROVE,
+      before: beforeCrSnapshot,
+      after: cr,
+      operator: input?.approver || null,
+      note: `变更申请审批通过`,
+      rollbackable: false
+    }).then(() => {
+      return recordAuditEvent({
+        objectType: AUDIT_OBJECT_TYPES.TASK,
+        objectId: task.id,
+        action: AUDIT_ACTIONS.UPDATE,
+        before: beforeTaskSnapshot,
+        after: task,
+        operator: input?.approver || null,
+        note: `变更审批通过[${cr.id}]`,
+        rollbackable: true
+      });
+    }).then(() => send(res, 200, { changeRequest: cr, task }));
+  });
 }
 
 export function handleChangeRequestReject(db, id, input, send, res) {
@@ -204,6 +240,9 @@ export function handleChangeRequestReject(db, id, input, send, res) {
   if (!input || !input.reason) {
     return send(res, 422, { error: "reason_required", detail: "驳回需要提供原因" });
   }
+
+  const beforeCrSnapshot = JSON.parse(JSON.stringify(cr));
+
   cr.status = "rejected";
   cr.reason = input.reason;
   cr.reviewedAt = new Date().toISOString();
@@ -214,5 +253,16 @@ export function handleChangeRequestReject(db, id, input, send, res) {
     addHistory(task, "change_rejected", `变更申请驳回[${cr.id}]：${input.reason}`);
   }
 
-  return saveDb(db).then(() => send(res, 200, cr));
+  return saveDb(db).then(() => {
+    return recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.CHANGE_REQUEST,
+      objectId: cr.id,
+      action: AUDIT_ACTIONS.REJECT,
+      before: beforeCrSnapshot,
+      after: cr,
+      operator: input.approver || null,
+      note: `变更申请驳回：${input.reason}`,
+      rollbackable: false
+    }).then(() => send(res, 200, cr));
+  });
 }
