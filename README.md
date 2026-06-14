@@ -490,6 +490,9 @@ POST /import/tasks (预检) ──→ 返回 sessionId + 预检结果
         ├── POST /import/tasks/confirm (确认提交)
         │       └── 真正写入 tasks，返回逐行结果
         │
+        ├── GET /import/sessions (查询会话列表)
+        │       └── 按状态分页查看会话摘要
+        │
         └── POST /import/sessions/:sessionId/cancel (取消)
                 └── 作废会话，不写入任何数据
 ```
@@ -944,7 +947,7 @@ curl -X POST "http://localhost:3009/import/sessions/IMP-1718325600000-A1B2C3D4/c
 
 ---
 
-### 5. 冲突判定与解决建议
+### 6. 冲突判定与解决建议
 
 当导入行与已有任务或批次内其他行在**同一港区**且**潮汐窗口重叠**时，标记为冲突：
 
@@ -964,7 +967,7 @@ curl -X POST "http://localhost:3009/import/sessions/IMP-1718325600000-A1B2C3D4/c
 
 ---
 
-### 6. 引航员工作负载摘要
+### 7. 引航员工作负载摘要
 
 预检结果中的 `pilotSummary` 展示每位引航员的当前负载和导入后预估：
 
