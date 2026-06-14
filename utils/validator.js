@@ -160,8 +160,6 @@ export function validateTaskBatch(rows, existingTaskIds = new Set()) {
   }
 
   const results = rows.map((row, index) => validateTaskRow(row, index, existingTaskIds));
-  const validRows = results.filter((r) => r.valid).map((r) => r.rowIndex);
-  const errorRows = results.filter((r) => !r.valid).map((r) => r.rowIndex);
 
   const idSet = new Set();
   const duplicateIdsWithinBatch = [];
@@ -181,6 +179,8 @@ export function validateTaskBatch(rows, existingTaskIds = new Set()) {
   }
 
   const allWarnings = results.flatMap((r) => r.warnings.map((w) => ({ ...w, rowIndex: r.rowIndex })));
+  const validRows = results.filter((r) => r.valid).map((r) => r.rowIndex);
+  const errorRows = results.filter((r) => !r.valid).map((r) => r.rowIndex);
 
   const duplicateIdRows = [];
   for (let i = 0; i < rows.length; i++) {
