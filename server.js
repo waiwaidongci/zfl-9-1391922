@@ -20,6 +20,7 @@ import {
 } from "./routes/leaves.js";
 import { handleBoardOverview, handleBoardDistrict } from "./routes/board.js";
 import { handleImportPreview, handleImportConfirm, handleImportSessionDetail, handleImportSessionCancel } from "./routes/imports.js";
+import { handleSimulationDispatch } from "./routes/simulation.js";
 
 const port = Number(process.env.PORT || 3009);
 
@@ -42,7 +43,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/") {
       return send(res, 200, {
         service: "港口引航站申请和排班API",
-        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel"]
+        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel", "POST /simulation/dispatch"]
       });
     }
 
@@ -204,6 +205,11 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "POST" && sessionAction === "cancel") {
         return handleImportSessionCancel(db, decodeURIComponent(sessionId), send, res);
       }
+    }
+
+    if (req.method === "POST" && url.pathname === "/simulation/dispatch") {
+      const input = await body(req);
+      return handleSimulationDispatch(db, input, send, res);
     }
 
     send(res, 404, { error: "not_found" });
