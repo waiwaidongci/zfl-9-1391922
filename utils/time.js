@@ -70,3 +70,46 @@ export function intervalsInDay(intervals, dayStart, dayEnd) {
   }
   return out;
 }
+
+export function hourRange(baseDate, hours) {
+  const start = baseDate instanceof Date ? new Date(baseDate) : new Date(baseDate);
+  const end = new Date(start.getTime() + hours * 3600 * 1000);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
+export function nextTwelveHours(dateStr) {
+  const base = dateStr ? new Date(dateStr) : new Date();
+  return hourRange(base, 12);
+}
+
+export function countOverlapping(intervals, windowStart, windowEnd) {
+  let count = 0;
+  for (const iv of intervals) {
+    if (overlaps(iv.start, iv.end, windowStart, windowEnd)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+export function peakOverlapCount(intervals, windowStart, windowEnd) {
+  const events = [];
+  const ws = new Date(windowStart).getTime();
+  const we = new Date(windowEnd).getTime();
+  for (const iv of intervals) {
+    const s = Math.max(new Date(iv.start).getTime(), ws);
+    const e = Math.min(new Date(iv.end).getTime(), we);
+    if (s < e) {
+      events.push({ time: s, delta: 1 });
+      events.push({ time: e, delta: -1 });
+    }
+  }
+  events.sort((a, b) => a.time - b.time);
+  let current = 0;
+  let peak = 0;
+  for (const ev of events) {
+    current += ev.delta;
+    if (current > peak) peak = current;
+  }
+  return peak;
+}

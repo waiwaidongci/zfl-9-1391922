@@ -18,6 +18,7 @@ import {
   handleLeaveCreate,
   handleLeaveCancel
 } from "./routes/leaves.js";
+import { handleBoardOverview, handleBoardDistrict } from "./routes/board.js";
 
 const port = Number(process.env.PORT || 3009);
 
@@ -40,7 +41,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/") {
       return send(res, 200, {
         service: "港口引航站申请和排班API",
-        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel"]
+        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel"]
       });
     }
 
@@ -54,6 +55,16 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/shifts/calendar") {
       return handleShiftsCalendar(db, url.searchParams, send, res);
+    }
+
+    if (req.method === "GET" && url.pathname === "/board") {
+      return handleBoardOverview(db, url.searchParams, send, res);
+    }
+
+    const boardMatch = url.pathname.match(/^\/board\/([^/]+)$/);
+    if (boardMatch && req.method === "GET") {
+      const [, district] = boardMatch;
+      return handleBoardDistrict(db, decodeURIComponent(district), url.searchParams, send, res);
     }
 
     if (req.method === "GET" && url.pathname === "/pilots") return send(res, 200, db.pilots);

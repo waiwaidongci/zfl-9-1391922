@@ -294,6 +294,114 @@ curl -X POST "http://localhost:3009/change-requests/CR-1718325600000/reject" \
  rejected ---------> 任务history记录驳回原因
 ```
 
+## 港区任务看板
+
+按港区实时聚合任务状态、潮汐窗口压力和可用引航员数量，支持指定基准日期。
+
+### 1. 全港区看板
+
+```bash
+# 默认从当前时间开始未来12小时
+curl "http://localhost:3009/board"
+
+# 指定基准日期时间
+curl "http://localhost:3009/board?date=2026-06-14T08:00:00.000Z"
+```
+
+**返回示例**：
+
+```json
+{
+  "generatedAt": "2026-06-14T08:00:00.000Z",
+  "window": {
+    "start": "2026-06-14T08:00:00.000Z",
+    "end": "2026-06-14T20:00:00.000Z"
+  },
+  "summary": {
+    "totalTasks": 5,
+    "taskCounts": {
+      "pending": 3,
+      "assigned": 1,
+      "in_progress": 0,
+      "done": 0,
+      "cancelled": 0
+    },
+    "districts": 3
+  },
+  "districts": [
+    {
+      "district": "东港",
+      "taskCounts": {
+        "pending": 1,
+        "assigned": 1,
+        "in_progress": 0,
+        "done": 0,
+        "cancelled": 0
+      },
+      "tidePressure": {
+        "level": "low",
+        "peakTasks": 1,
+        "totalTasks": 1,
+        "window": { "start": "...", "end": "..." }
+      },
+      "pilots": {
+        "total": 3,
+        "available": 2,
+        "availablePilots": [
+          { "pilotId": "P-03", "name": "周屿", "grades": ["A"], "shipTypes": ["散货船", "集装箱船", "油轮"] }
+        ]
+      }
+    }
+  ]
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| `generatedAt` | 看板生成时间 |
+| `window` | 未来12小时时间窗口 |
+| `summary.taskCounts` | 全港区各状态任务总数 |
+| `districts[].taskCounts` | 各港区五种状态（pending/assigned/in_progress/done/cancelled）任务数量 |
+| `districts[].tidePressure.level` | 潮汐窗口压力等级：low / medium / high |
+| `districts[].tidePressure.peakTasks` | 窗口内峰值并发任务数 |
+| `districts[].tidePressure.totalTasks` | 窗口内总任务数 |
+| `districts[].pilots.total` | 该港区总引航员数 |
+| `districts[].pilots.available` | 该港区可用引航员数（值班、无休假、无任务冲突） |
+| `districts[].pilots.availablePilots` | 可用引航员详情列表 |
+
+---
+
+### 2. 单港区看板详情
+
+```bash
+curl "http://localhost:3009/board/东港"
+curl "http://localhost:3009/board/北槽?date=2026-06-14T10:00:00.000Z"
+```
+
+港区名为 URL 编码的中文，返回结构与全港区看板中单个 `districts` 条目一致，外加 `generatedAt` 和 `window`。
+
+---
+
+### 3. 潮汐压力等级判定规则
+
+| 等级 | 条件 |
+|------|------|
+| `high` | 峰值任务 ≥ 5 或 总任务 ≥ 10 |
+| `medium` | 峰值任务 ≥ 3 或 总任务 ≥ 5 |
+| `low` | 其他情况 |
+
+### 4. 可用引航员判定
+
+引航员需同时满足：
+- 属于该港区（`districts` 包含）
+- 在未来12小时内有值班时段
+- 无休假冲突
+- 无已分配的活跃任务时间冲突
+
+---
+
 ## 接口调用示例
 
 ### 查询值班日历
