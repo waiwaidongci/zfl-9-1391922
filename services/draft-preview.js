@@ -80,7 +80,7 @@ export function previewDraft(db, draft) {
   for (const field of REQUIRED_TASK_FIELDS) {
     if (field === "vessel") {
       fieldCompleteness.fieldStatus[field] = {
-        present: draft.vessel && typeof draft.vessel === "object" && !!draft.vessel.name,
+        present: !!(draft.vessel && typeof draft.vessel === "object" && draft.vessel.name),
         detail: draft.vessel ? {
           hasName: !!draft.vessel?.name,
           hasType: !!draft.vessel?.type
@@ -88,8 +88,8 @@ export function previewDraft(db, draft) {
       };
     } else if (field === "tideWindow") {
       fieldCompleteness.fieldStatus[field] = {
-        present: draft.tideWindow && typeof draft.tideWindow === "object" &&
-          !!draft.tideWindow.start && !!draft.tideWindow.end,
+        present: !!(draft.tideWindow && typeof draft.tideWindow === "object" &&
+          draft.tideWindow.start && draft.tideWindow.end),
         detail: draft.tideWindow ? {
           hasStart: !!draft.tideWindow?.start,
           hasEnd: !!draft.tideWindow?.end

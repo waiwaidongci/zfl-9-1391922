@@ -87,6 +87,19 @@ async function runTests() {
     assert(result.canSubmit === false, "不完整草稿 canSubmit=false");
     assert(result.fieldCompleteness.complete === false, "fieldCompleteness.complete=false");
     assert(result.fieldCompleteness.missingFields.length > 0, "missingFields 非空");
+    assert(result.fieldCompleteness.fieldStatus.tideWindow.present === false, "缺失 tideWindow 的 present=false");
+    assert(typeof result.fieldCompleteness.fieldStatus.tideWindow.present === "boolean", "tideWindow.present 为布尔值");
+
+    const missingVesselResult = previewDraft(db, {
+      id: "D-TEST-MISSING-VESSEL",
+      vessel: null,
+      district: "东港",
+      berthPlan: "靠泊D1",
+      tideWindow: null,
+      requiredGrade: "B"
+    });
+    assert(missingVesselResult.fieldCompleteness.fieldStatus.vessel.present === false, "缺失 vessel 的 present=false");
+    assert(typeof missingVesselResult.fieldCompleteness.fieldStatus.vessel.present === "boolean", "vessel.present 为布尔值");
 
     assert(result.pilotRecommendation.totalEligible === 0, "不完整草稿无推荐合格引航员");
     assert(result.pilotRecommendation.recommendations.length === 0, "不完整草稿推荐列表为空");
