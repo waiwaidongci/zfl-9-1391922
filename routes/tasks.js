@@ -1,5 +1,5 @@
 import { saveDb } from "../utils/db.js";
-import { evaluateCandidate, recommendPilots, pilotFitsCheck } from "../utils/recommendation.js";
+import { recommendPilots, pilotFitsCheck } from "../utils/recommendation.js";
 import { DEFAULT_TASK_STATUS, ASSIGNED_TASK_STATUS } from "../config/scheduling-rules.js";
 
 function addHistory(task, action, note) {
