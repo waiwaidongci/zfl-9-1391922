@@ -104,7 +104,7 @@ export function peakOverlapCount(intervals, windowStart, windowEnd) {
       events.push({ time: e, delta: -1 });
     }
   }
-  events.sort((a, b) => a.time - b.time);
+  events.sort((a, b) => a.time - b.time || a.delta - b.delta);
   let current = 0;
   let peak = 0;
   for (const ev of events) {
