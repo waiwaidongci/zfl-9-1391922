@@ -27,8 +27,10 @@ curl "http://localhost:3009/config/options"
   "grades": ["A", "B"],
   "taskStatuses": ["pending", "assigned", "in_progress", "completed", "cancelled", "done"],
   "activeTaskStatuses": ["pending", "assigned", "in_progress"],
-  "changeRequestStatuses": ["pending", "approved", "rejected"],
-  "changeRequestTypes": ["tide_window", "berth_plan", "cancel", "other"]
+  "changeRequestStatuses": ["pending", "approved", "rejected", "superseded"],
+  "changeRequestTypes": ["tide_window", "berth_plan", "cancel", "other"],
+  "pendingRequestPolicies": ["block", "reject_existing", "allow"],
+  "defaultPendingRequestPolicy": "block"
 }
 ```
 
@@ -135,10 +137,13 @@ curl "http://localhost:3009/tasks?district=东港&activeOnly=true&vesselName=远
 | `type` | 变更类型：`tide_window` / `berth_plan` / `cancel` / `other` |
 | `original` | 变更前的任务快照（状态、潮汐窗口、泊位、引航员） |
 | `proposed` | 拟变更的内容（`tideWindow` / `berthPlan` / `status`） |
-| `status` | 申请状态：`pending` / `approved` / `rejected` |
+| `status` | 申请状态：`pending` / `approved` / `rejected` / `superseded` |
 | `reason` | 驳回原因（仅驳回时填写） |
 | `applicant` / `approver` | 申请人/审批人 |
 | `conflictCheck` | 冲突检测结果 `{ ok, conflicts[] }` |
+| `pendingRequestPolicy` | 同任务待审批治理策略：`block` / `reject_existing` / `allow`，默认 `block` |
+| `supersededChangeRequestIds` | 当前申请创建时取代的同任务旧申请ID列表 |
+| `supersededBy` | 当前申请被哪个新申请或审批通过申请取代 |
 | `createdAt` / `reviewedAt` | 创建/审批时间 |
 
 ---
@@ -181,6 +186,8 @@ curl -X POST "http://localhost:3009/tasks/T-260614-01/change-requests" \
   "applicant": "调度员小王",
   "approver": null,
   "note": "船期延误，需推迟潮汐窗口",
+  "pendingRequestPolicy": "block",
+  "supersededChangeRequestIds": null,
   "conflictCheck": {
     "ok": true,
     "conflicts": []
@@ -356,15 +363,161 @@ curl -X POST "http://localhost:3009/change-requests/CR-1718325600000/reject" \
 
 ---
 
+### 7. 同任务待审批治理
+
+默认策略为 `block`：同一任务已有 `pending` 变更申请时，创建新申请会直接返回 409，避免重复待审。
+
+```bash
+curl -X POST "http://localhost:3009/tasks/T-260614-01/change-requests" \
+  -H "Content-Type: application/json" \
+  -d '{ "berthPlan": "靠泊D6", "applicant": "调度员小赵" }'
+```
+
+**返回示例（409 Conflict）**：
+
+```json
+{
+  "error": "pending_request_blocked",
+  "detail": "该任务已有 1 个待审批变更申请，需先处理后再提交新申请",
+  "pendingChangeRequestIds": ["CR-1718325600000"]
+}
+```
+
+如果需要新申请取代旧申请，可传入 `pendingRequestPolicy: "reject_existing"`。系统会先把同任务旧 `pending` 申请改为 `superseded`，再创建新申请，因此新申请的 `conflictCheck` 不会继续把已取代的旧申请记为 `pending_request_conflict`。
+
+```bash
+curl -X POST "http://localhost:3009/tasks/T-260614-01/change-requests" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tideWindow": {
+      "start": "2026-06-14T04:00:00.000Z",
+      "end": "2026-06-14T07:00:00.000Z"
+    },
+    "applicant": "调度员小赵",
+    "pendingRequestPolicy": "reject_existing"
+  }'
+```
+
+**返回示例（201 Created）**：
+
+```json
+{
+  "id": "CR-1718325700000",
+  "taskId": "T-260614-01",
+  "type": "tide_window",
+  "status": "pending",
+  "pendingRequestPolicy": "reject_existing",
+  "supersededChangeRequestIds": ["CR-1718325600000"],
+  "conflictCheck": {
+    "ok": true,
+    "conflicts": []
+  },
+  "createdAt": "2026-06-14T03:40:00.000Z",
+  "reviewedAt": null
+}
+```
+
+旧申请会变为：
+
+```json
+{
+  "id": "CR-1718325600000",
+  "status": "superseded",
+  "reason": "被新申请取代，策略: reject_existing",
+  "supersededBy": "CR-1718325700000",
+  "reviewedAt": "2026-06-14T03:40:00.000Z"
+}
+```
+
+任务 `history` 会追加：
+
+```json
+{
+  "at": "2026-06-14T03:40:00.000Z",
+  "action": "change_superseded",
+  "note": "同任务待审批治理：1个待审批申请被取代：CR-1718325600000，策略: reject_existing"
+}
+```
+
+如果需要保留旧行为，可传入 `pendingRequestPolicy: "allow"`。系统允许创建新申请，但会在 `conflictCheck` 中提示同任务待审批冲突。
+
+```bash
+curl -X POST "http://localhost:3009/tasks/T-260614-01/change-requests" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "cancelled",
+    "applicant": "调度员小赵",
+    "pendingRequestPolicy": "allow"
+  }'
+```
+
+**返回示例（201 Created）**：
+
+```json
+{
+  "id": "CR-1718325800000",
+  "taskId": "T-260614-01",
+  "type": "cancel",
+  "status": "pending",
+  "pendingRequestPolicy": "allow",
+  "conflictCheck": {
+    "ok": false,
+    "conflicts": [
+      {
+        "type": "pending_request_conflict",
+        "conflictingChangeRequestIds": ["CR-1718325700000"],
+        "detail": "存在待审批的同任务变更申请：CR-1718325700000"
+      }
+    ]
+  }
+}
+```
+
+审批通过某个申请时，同任务其他 `pending` 申请会自动变为 `superseded`，响应会返回 `supersededChangeRequestIds`，任务 `history` 和审计中也会记录关联状态变化。
+
+```json
+{
+  "changeRequest": { "id": "CR-1718325700000", "status": "approved" },
+  "task": {
+    "id": "T-260614-01",
+    "history": [
+      {
+        "at": "...",
+        "action": "change_superseded",
+        "note": "审批通过[CR-1718325700000]：同任务 1 个待审批申请自动失效：CR-1718325800000"
+      }
+    ]
+  },
+  "supersededChangeRequestIds": ["CR-1718325800000"]
+}
+```
+
+审批驳回时，如果该申请创建时曾取代旧申请，任务 `history` 和审计会记录这些关联申请继续保持 `superseded` 状态；响应会返回同任务剩余待审批申请ID列表。
+
+```json
+{
+  "id": "CR-1718325700000",
+  "status": "rejected",
+  "supersededChangeRequestIds": ["CR-1718325600000"],
+  "remainingPendingChangeRequestIds": []
+}
+```
+
+---
+
 ### 状态流转图
 
 ```
-           创建               审批通过
- pending ---------> approved ---------> 任务更新 + history
+         创建               审批通过
+ pending ---------> approved ---------> 任务更新 + history + 关联申请状态记录
+    |  \
+    |   \ reject_existing 或其他同任务申请审批通过
+    |    v
+    |   superseded -------> history + 审计记录取代关系
     |
     | 审批驳回(需原因)
     v
- rejected ---------> 任务history记录驳回原因
+ rejected ---------> 任务history记录驳回原因 + 关联申请状态记录
 ```
 
 ## 港区任务看板
@@ -1768,6 +1921,8 @@ curl -X POST "http://localhost:3009/tasks/T-260614-01/rollback/status" \
 | 变更冲突复查 | changeRequest | recheck | 否 |
 | 变更审批通过 | changeRequest / task | approve / update | 任务更新可回滚 |
 | 变更审批驳回 | changeRequest | reject | 否 |
+| 同任务旧申请被取代 | changeRequest | supersede | 否 |
+| 关联申请状态记录 | task | related_status_change | 否 |
 | 创建草稿 | draft | create | 否 |
 | 更新草稿 | draft | update | 否 |
 | 提交草稿 | draft / task | submit / create | 否 |
