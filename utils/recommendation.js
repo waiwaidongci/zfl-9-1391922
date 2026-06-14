@@ -1,4 +1,4 @@
-import { overlaps, taskWindow, activeTasksForPilot, intersectInterval } from "./time.js";
+import { overlaps, taskWindow, activeTasksForPilot, intersectInterval, leaveConflictsForPilot } from "./time.js";
 import { RECOMMEND_WEIGHTS, gradeScore, shiftCoverageScore, workloadScore, recommendRulesMeta } from "../config/recommend-rules.js";
 
 function minutesBetween(start, end) {
@@ -49,6 +49,12 @@ export function evaluateCandidate(db, pilot, task) {
     detail: { activeTaskCount: activeTasks.length, conflictingTasks: conflicts.map((t) => t.id) }
   };
 
+  const leaveConflicts = leaveConflictsForPilot(db, pilot.id, window.start, window.end);
+  breakdown.noLeaveConflict = {
+    score: leaveConflicts.length === 0 ? 1 : 0,
+    detail: { conflictingLeaves: leaveConflicts.map((l) => ({ id: l.id, type: l.type, period: l.period })) }
+  };
+
   breakdown.workload = {
     score: workloadScore(activeTasks.length),
     detail: { activeTaskCount: activeTasks.length }
@@ -65,7 +71,8 @@ export function evaluateCandidate(db, pilot, task) {
     breakdown.district.score > 0 &&
     breakdown.shipType.score > 0 &&
     breakdown.grade.score > 0 &&
-    breakdown.noTimeConflict.score > 0;
+    breakdown.noTimeConflict.score > 0 &&
+    breakdown.noLeaveConflict.score > 0;
 
   const disqualifying = [];
   if (breakdown.shiftCoverage.score <= 0) disqualifying.push("not_on_shift");
@@ -73,6 +80,7 @@ export function evaluateCandidate(db, pilot, task) {
   if (breakdown.shipType.score <= 0) disqualifying.push("ship_type_mismatch");
   if (breakdown.grade.score <= 0) disqualifying.push("grade_mismatch");
   if (breakdown.noTimeConflict.score <= 0) disqualifying.push("time_conflict");
+  if (breakdown.noLeaveConflict.score <= 0) disqualifying.push("leave_conflict");
 
   return {
     pilotId: pilot.id,
@@ -111,15 +119,17 @@ export function pilotFitsCheck(db, pilot, task, exceptTaskId) {
     const other = taskWindow(item);
     return !overlaps(window.start, window.end, other.start, other.end);
   });
+  const noLeaveConflict = leaveConflictsForPilot(db, pilot.id, window.start, window.end).length === 0;
   const districtMatch = pilot.districts.includes(task.district);
   const shipTypeMatch = pilot.shipTypes.includes(task.vessel.type);
   const gradeMatch = pilot.grades.includes(task.requiredGrade);
   return {
     pilot,
-    ok: onShift && noConflict && districtMatch && shipTypeMatch && gradeMatch,
+    ok: onShift && noConflict && noLeaveConflict && districtMatch && shipTypeMatch && gradeMatch,
     reasons: [
       onShift ? null : "not_on_shift",
       noConflict ? null : "time_conflict",
+      noLeaveConflict ? null : "leave_conflict",
       districtMatch ? null : "district_mismatch",
       shipTypeMatch ? null : "ship_type_mismatch",
       gradeMatch ? null : "grade_mismatch"

@@ -1,7 +1,15 @@
 import { isActiveTaskStatus } from "../config/scheduling-rules.js";
+import { activeLeavesForPilot } from "./db.js";
 
 export function overlaps(aStart, aEnd, bStart, bEnd) {
   return new Date(aStart) < new Date(bEnd) && new Date(bStart) < new Date(aEnd);
+}
+
+export function leaveConflictsForPilot(db, pilotId, windowStart, windowEnd) {
+  const leaves = activeLeavesForPilot(db, pilotId);
+  return leaves.filter((leave) =>
+    overlaps(windowStart, windowEnd, leave.period.start, leave.period.end)
+  );
 }
 
 export function taskWindow(task) {

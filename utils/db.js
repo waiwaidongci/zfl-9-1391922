@@ -47,6 +47,28 @@ const seed = {
       status: "pending",
       pilotId: null,
       history: [{ at: "2026-06-13T22:29:06.400Z", action: "created", note: "西港油轮任务" }]
+    },
+    {
+      id: "T-260614-04",
+      vessel: { name: "长江明珠", imo: "IMO9700303", type: "散货船", length: 210 },
+      district: "东港",
+      berthPlan: "靠泊D5",
+      tideWindow: { start: "2026-06-17T02:00:00.000Z", end: "2026-06-17T05:00:00.000Z" },
+      requiredGrade: "B",
+      status: "pending",
+      pilotId: null,
+      history: [{ at: "2026-06-14T08:00:00.000Z", action: "created", note: "东港散货船任务 - 用于验证P-01休假冲突" }]
+    },
+    {
+      id: "T-260614-05",
+      vessel: { name: "海洋之星", imo: "IMO9800404", type: "集装箱船", length: 280 },
+      district: "北槽",
+      berthPlan: "靠泊N4",
+      tideWindow: { start: "2026-06-15T08:00:00.000Z", end: "2026-06-15T11:00:00.000Z" },
+      requiredGrade: "B",
+      status: "pending",
+      pilotId: null,
+      history: [{ at: "2026-06-14T09:30:00.000Z", action: "created", note: "北槽集装箱船任务 - 用于验证P-04临时停用冲突" }]
     }
   ],
   drafts: [
@@ -73,7 +95,27 @@ const seed = {
       updatedAt: "2026-06-13T21:15:00.000Z"
     }
   ],
-  changeRequests: []
+  changeRequests: [],
+  leaveRecords: [
+    {
+      id: "L-260614-01",
+      pilotId: "P-01",
+      type: "vacation",
+      period: { start: "2026-06-16T00:00:00.000Z", end: "2026-06-18T12:00:00.000Z" },
+      reason: "年度年休假",
+      status: "active",
+      createdAt: "2026-06-13T10:00:00.000Z"
+    },
+    {
+      id: "L-260614-02",
+      pilotId: "P-04",
+      type: "disabled",
+      period: { start: "2026-06-15T06:00:00.000Z", end: "2026-06-15T18:00:00.000Z" },
+      reason: "体检/临时调休",
+      status: "active",
+      createdAt: "2026-06-13T15:30:00.000Z"
+    }
+  ]
 };
 
 export async function loadDb() {
@@ -84,9 +126,49 @@ export async function loadDb() {
   const db = JSON.parse(await readFile(dbPath, "utf8"));
   if (!db.drafts) db.drafts = [];
   if (!db.changeRequests) db.changeRequests = [];
+  if (!db.leaveRecords) db.leaveRecords = [];
   return db;
 }
 
 export async function saveDb(db) {
   await writeFile(dbPath, JSON.stringify(db, null, 2));
+}
+
+export function listLeaveRecords(db, { pilotId, status, includeCancelled = false } = {}) {
+  let records = db.leaveRecords;
+  if (!includeCancelled) records = records.filter((r) => r.status === "active");
+  if (pilotId) records = records.filter((r) => r.pilotId === pilotId);
+  if (status) records = records.filter((r) => r.status === status);
+  return [...records].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+export function activeLeavesForPilot(db, pilotId) {
+  return db.leaveRecords.filter((r) => r.pilotId === pilotId && r.status === "active");
+}
+
+export function createLeaveRecord(db, input) {
+  const record = {
+    id: input.id || `L-${Date.now()}`,
+    pilotId: input.pilotId,
+    type: input.type || "vacation",
+    period: { start: input.period.start, end: input.period.end },
+    reason: input.reason || "",
+    status: "active",
+    createdAt: new Date().toISOString()
+  };
+  db.leaveRecords.push(record);
+  return record;
+}
+
+export function cancelLeaveRecord(db, recordId, note) {
+  const record = db.leaveRecords.find((r) => r.id === recordId);
+  if (!record) return null;
+  record.status = "cancelled";
+  record.cancelledAt = new Date().toISOString();
+  if (note) record.cancelledNote = note;
+  return record;
+}
+
+export function getLeaveRecord(db, recordId) {
+  return db.leaveRecords.find((r) => r.id === recordId) || null;
 }

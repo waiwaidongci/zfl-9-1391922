@@ -12,6 +12,12 @@ import {
   handleChangeRequestApprove,
   handleChangeRequestReject
 } from "./routes/change-requests.js";
+import {
+  handleLeaveList,
+  handleLeaveDetail,
+  handleLeaveCreate,
+  handleLeaveCancel
+} from "./routes/leaves.js";
 
 const port = Number(process.env.PORT || 3009);
 
@@ -34,7 +40,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/") {
       return send(res, 200, {
         service: "港口引航站申请和排班API",
-        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject"]
+        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel"]
       });
     }
 
@@ -145,6 +151,25 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "POST" && crAction === "reject") {
         const input = await body(req);
         return handleChangeRequestReject(db, crId, input, send, res);
+      }
+    }
+
+    if (req.method === "GET" && url.pathname === "/leaves") {
+      return handleLeaveList(db, url.searchParams, send, res);
+    }
+
+    if (req.method === "POST" && url.pathname === "/leaves") {
+      const input = await body(req);
+      return handleLeaveCreate(db, input, send, res);
+    }
+
+    const leaveMatch = url.pathname.match(/^\/leaves\/([^/]+)(?:\/([^/]+))?$/);
+    if (leaveMatch) {
+      const [, leaveId, leaveAction] = leaveMatch;
+      if (req.method === "GET" && !leaveAction) return handleLeaveDetail(db, leaveId, send, res);
+      if (req.method === "POST" && leaveAction === "cancel") {
+        const input = await body(req);
+        return handleLeaveCancel(db, leaveId, input, send, res);
       }
     }
 

@@ -183,6 +183,56 @@
           "note": "西港油轮任务"
         }
       ]
+    },
+    {
+      "id": "T-260614-04",
+      "vessel": {
+        "name": "长江明珠",
+        "imo": "IMO9700303",
+        "type": "散货船",
+        "length": 210
+      },
+      "district": "东港",
+      "berthPlan": "靠泊D5",
+      "tideWindow": {
+        "start": "2026-06-17T02:00:00.000Z",
+        "end": "2026-06-17T05:00:00.000Z"
+      },
+      "requiredGrade": "B",
+      "status": "pending",
+      "pilotId": null,
+      "history": [
+        {
+          "at": "2026-06-14T08:00:00.000Z",
+          "action": "created",
+          "note": "东港散货船任务 - 用于验证P-01休假冲突"
+        }
+      ]
+    },
+    {
+      "id": "T-260614-05",
+      "vessel": {
+        "name": "海洋之星",
+        "imo": "IMO9800404",
+        "type": "集装箱船",
+        "length": 280
+      },
+      "district": "北槽",
+      "berthPlan": "靠泊N4",
+      "tideWindow": {
+        "start": "2026-06-15T08:00:00.000Z",
+        "end": "2026-06-15T11:00:00.000Z"
+      },
+      "requiredGrade": "B",
+      "status": "pending",
+      "pilotId": null,
+      "history": [
+        {
+          "at": "2026-06-14T09:30:00.000Z",
+          "action": "created",
+          "note": "北槽集装箱船任务 - 用于验证P-04临时停用冲突"
+        }
+      ]
     }
   ],
   "drafts": [
@@ -222,5 +272,31 @@
       "updatedAt": "2026-06-13T21:15:00.000Z"
     }
   ],
-  "changeRequests": []
+  "changeRequests": [],
+  "leaveRecords": [
+    {
+      "id": "L-260614-01",
+      "pilotId": "P-01",
+      "type": "vacation",
+      "period": {
+        "start": "2026-06-16T00:00:00.000Z",
+        "end": "2026-06-18T12:00:00.000Z"
+      },
+      "reason": "年度年休假",
+      "status": "active",
+      "createdAt": "2026-06-13T10:00:00.000Z"
+    },
+    {
+      "id": "L-260614-02",
+      "pilotId": "P-04",
+      "type": "disabled",
+      "period": {
+        "start": "2026-06-15T06:00:00.000Z",
+        "end": "2026-06-15T18:00:00.000Z"
+      },
+      "reason": "体检/临时调休",
+      "status": "active",
+      "createdAt": "2026-06-13T15:30:00.000Z"
+    }
+  ]
 }

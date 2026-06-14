@@ -4,6 +4,7 @@ export const RECOMMEND_WEIGHTS = {
   shipType: 15,
   grade: 20,
   noTimeConflict: 15,
+  noLeaveConflict: 10,
   workload: 5
 };
 
@@ -34,6 +35,7 @@ export const recommendRulesMeta = {
   district: { label: "港区匹配", description: "引航员是否具备该港区作业资质" },
   shipType: { label: "船型匹配", description: "引航员是否具备该船型引航资质" },
   grade: { label: "资质等级", description: "引航员资质等级是否满足任务要求" },
-  noTimeConflict: { label: "时间冲突", description: "任务时间段是否与引航员已有任务冲突" },
+  noTimeConflict: { label: "任务冲突", description: "任务时间段是否与引航员已有任务冲突" },
+  noLeaveConflict: { label: "休假冲突", description: "任务时间段是否与引航员休假/停用冲突" },
   workload: { label: "工作负载", description: "引航员当前进行中的任务数量" }
 };
