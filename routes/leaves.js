@@ -1,5 +1,6 @@
 import { saveDb, listLeaveRecords, createLeaveRecord, cancelLeaveRecord, getLeaveRecord } from "../utils/db.js";
 import { overlaps } from "../utils/time.js";
+import { recordAuditEvent, AUDIT_OBJECT_TYPES, AUDIT_ACTIONS } from "../services/audit.js";
 
 const LEAVE_TYPES = ["vacation", "disabled"];
 
@@ -50,7 +51,17 @@ export function handleLeaveCreate(db, input, send, res) {
     });
   }
   const record = createLeaveRecord(db, input);
-  return saveDb(db).then(() => send(res, 201, record));
+  return saveDb(db).then(() => {
+    return recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.LEAVE,
+      objectId: record.id,
+      action: AUDIT_ACTIONS.CREATE,
+      after: record,
+      operator: input.operator || null,
+      note: input.reason || "创建休假记录",
+      rollbackable: false
+    }).then(() => send(res, 201, record));
+  });
 }
 
 export function handleLeaveCancel(db, recordId, input, send, res) {
@@ -59,6 +70,18 @@ export function handleLeaveCancel(db, recordId, input, send, res) {
   if (record.status === "cancelled") {
     return send(res, 409, { error: "leave_already_cancelled" });
   }
+  const beforeSnapshot = JSON.parse(JSON.stringify(record));
   const cancelled = cancelLeaveRecord(db, recordId, input && input.note);
-  return saveDb(db).then(() => send(res, 200, cancelled));
+  return saveDb(db).then(() => {
+    return recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.LEAVE,
+      objectId: recordId,
+      action: AUDIT_ACTIONS.CANCEL,
+      before: beforeSnapshot,
+      after: cancelled,
+      operator: (input && input.operator) || null,
+      note: (input && input.note) || "取消休假记录",
+      rollbackable: false
+    }).then(() => send(res, 200, cancelled));
+  });
 }

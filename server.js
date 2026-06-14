@@ -172,6 +172,7 @@ const server = http.createServer(async (req, res) => {
     const auditMatch = url.pathname.match(/^\/audit\/([^/]+)$/);
     if (auditMatch && req.method === "GET") {
       const [, auditId] = auditMatch;
+      if (auditId === "rollbackable-types") return send(res, 404, { error: "not_found" });
       return handleAuditEventDetail(db, auditId, send, res);
     }
 

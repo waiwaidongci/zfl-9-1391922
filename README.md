@@ -980,7 +980,7 @@ curl "http://localhost:3009/audit/rollbackable-types"
 ```json
 {
   "objectTypes": ["pilot", "task", "changeRequest", "draft", "leaveRecord", "importSession"],
-  "actions": ["create", "update", "assign", "unassign", "status_change", "approve", "reject", "submit", "cancel", "rollback", "import_create", "import_update"],
+  "actions": ["create", "update", "delete", "assign", "unassign", "status_change", "approve", "reject", "recheck", "submit", "cancel", "rollback", "import_create", "import_update"],
   "rollbackableTypes": [
     { "action": "assign", "objectType": "task", "description": "任务派单" },
     { "action": "status_change", "objectType": "task", "description": "任务状态更新" },
@@ -1103,7 +1103,14 @@ curl -X POST "http://localhost:3009/tasks/T-260614-01/rollback/status" \
 | 任务状态更新 | task | status_change | 是 |
 | 任务信息更新 | task | update | 是 |
 | 创建变更申请 | changeRequest | create | 否 |
+| 变更冲突复查 | changeRequest | recheck | 否 |
 | 变更审批通过 | changeRequest / task | approve / update | 任务更新可回滚 |
 | 变更审批驳回 | changeRequest | reject | 否 |
+| 创建草稿 | draft | create | 否 |
+| 更新草稿 | draft | update | 否 |
+| 提交草稿 | draft / task | submit / create | 否 |
+| 创建休假记录 | leaveRecord | create | 否 |
+| 取消休假记录 | leaveRecord | cancel | 否 |
 | 批量导入创建 | task | import_create | 否 |
 | 批量导入更新 | task | import_update | 否 |
+| 取消导入会话 | importSession | cancel | 否 |

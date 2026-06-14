@@ -166,8 +166,20 @@ export function handleChangeRequestRecheck(db, id, send, res) {
   if (!cr) return send(res, 404, { error: "change_request_not_found" });
   const task = db.tasks.find((t) => t.id === cr.taskId);
   if (!task) return send(res, 404, { error: "task_not_found" });
+  const beforeConflictCheck = cr.conflictCheck ? JSON.parse(JSON.stringify(cr.conflictCheck)) : null;
   cr.conflictCheck = checkConflicts(db, task, cr.proposed, cr.id);
-  return saveDb(db).then(() => send(res, 200, { id: cr.id, conflictCheck: cr.conflictCheck }));
+  return saveDb(db).then(() => {
+    return recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.CHANGE_REQUEST,
+      objectId: cr.id,
+      action: AUDIT_ACTIONS.RECHECK,
+      before: { conflictCheck: beforeConflictCheck },
+      after: { conflictCheck: cr.conflictCheck },
+      operator: null,
+      note: "冲突复查",
+      rollbackable: false
+    }).then(() => send(res, 200, { id: cr.id, conflictCheck: cr.conflictCheck }));
+  });
 }
 
 export function handleChangeRequestApprove(db, id, input, send, res) {

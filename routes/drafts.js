@@ -1,5 +1,6 @@
 import { saveDb } from "../utils/db.js";
 import { DEFAULT_TASK_STATUS } from "../config/scheduling-rules.js";
+import { recordAuditEvent, AUDIT_OBJECT_TYPES, AUDIT_ACTIONS } from "../services/audit.js";
 
 const REQUIRED_TASK_FIELDS = ["vessel", "district", "berthPlan", "tideWindow", "requiredGrade"];
 
@@ -33,7 +34,17 @@ export function handleDraftCreate(db, input, send, res) {
     updatedAt: now
   };
   db.drafts.push(draft);
-  return saveDb(db).then(() => send(res, 201, draft));
+  return saveDb(db).then(() => {
+    return recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.DRAFT,
+      objectId: draft.id,
+      action: AUDIT_ACTIONS.CREATE,
+      after: draft,
+      operator: input.operator || null,
+      note: input.note || "新建草稿",
+      rollbackable: false
+    }).then(() => send(res, 201, draft));
+  });
 }
 
 export function handleDraftList(db, searchParams, send, res) {
@@ -52,6 +63,7 @@ export function handleDraftDetail(db, id, send, res) {
 export function handleDraftUpdate(db, id, input, send, res) {
   const draft = db.drafts.find((d) => d.id === id);
   if (!draft) return send(res, 404, { error: "draft_not_found" });
+  const beforeSnapshot = JSON.parse(JSON.stringify(draft));
   if (input.vessel !== undefined) draft.vessel = input.vessel;
   if (input.district !== undefined) draft.district = input.district;
   if (input.berthPlan !== undefined) draft.berthPlan = input.berthPlan;
@@ -59,7 +71,18 @@ export function handleDraftUpdate(db, id, input, send, res) {
   if (input.requiredGrade !== undefined) draft.requiredGrade = input.requiredGrade;
   if (input.note !== undefined) draft.note = input.note;
   draft.updatedAt = new Date().toISOString();
-  return saveDb(db).then(() => send(res, 200, draft));
+  return saveDb(db).then(() => {
+    return recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.DRAFT,
+      objectId: draft.id,
+      action: AUDIT_ACTIONS.UPDATE,
+      before: beforeSnapshot,
+      after: draft,
+      operator: input.operator || null,
+      note: input.note || "更新草稿",
+      rollbackable: false
+    }).then(() => send(res, 200, draft));
+  });
 }
 
 export function handleDraftSubmit(db, id, input, send, res) {
@@ -68,6 +91,7 @@ export function handleDraftSubmit(db, id, input, send, res) {
   const draft = db.drafts[draftIndex];
   const missing = validateDraftForSubmit(draft);
   if (missing.length > 0) return send(res, 422, { error: "incomplete_draft", missing });
+  const draftSnapshot = JSON.parse(JSON.stringify(draft));
   const task = {
     id: input.taskId || `T-${Date.now()}`,
     vessel: draft.vessel,
@@ -82,5 +106,26 @@ export function handleDraftSubmit(db, id, input, send, res) {
   task.history.push({ at: new Date().toISOString(), action: "created", note: draft.note || input.note || `由草稿${draft.id}提交` });
   db.tasks.push(task);
   db.drafts.splice(draftIndex, 1);
-  return saveDb(db).then(() => send(res, 201, { submitted: draft.id, task }));
+  return saveDb(db).then(() => {
+    return recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.DRAFT,
+      objectId: draft.id,
+      action: AUDIT_ACTIONS.SUBMIT,
+      before: draftSnapshot,
+      after: null,
+      operator: input.operator || null,
+      note: `草稿提交为任务 ${task.id}`,
+      rollbackable: false
+    }).then(() => {
+      return recordAuditEvent({
+        objectType: AUDIT_OBJECT_TYPES.TASK,
+        objectId: task.id,
+        action: AUDIT_ACTIONS.CREATE,
+        after: task,
+        operator: input.operator || null,
+        note: `由草稿${draft.id}提交创建`,
+        rollbackable: false
+      });
+    }).then(() => send(res, 201, { submitted: draft.id, task }));
+  });
 }

@@ -18,6 +18,7 @@ export const AUDIT_ACTIONS = {
   STATUS_CHANGE: "status_change",
   APPROVE: "approve",
   REJECT: "reject",
+  RECHECK: "recheck",
   SUBMIT: "submit",
   CANCEL: "cancel",
   ROLLBACK: "rollback",

@@ -176,6 +176,7 @@ export function handleImportConfirm(db, input, send, res) {
 
   const existingTaskIds = new Set(db.tasks.map((t) => t.id));
   const results = [];
+  const auditSnapshots = [];
   let successCount = 0;
   let failedCount = 0;
   let createdCount = 0;
@@ -187,6 +188,7 @@ export function handleImportConfirm(db, input, send, res) {
     try {
       let task;
       let isUpdate = false;
+      let beforeSnapshot = null;
 
       if (row.id && existingTaskIds.has(row.id)) {
         if (!overwrite) {
@@ -204,6 +206,7 @@ export function handleImportConfirm(db, input, send, res) {
         const existingIndex = db.tasks.findIndex((t) => t.id === row.id);
         if (existingIndex >= 0) {
           const existing = db.tasks[existingIndex];
+          beforeSnapshot = JSON.parse(JSON.stringify(existing));
           const builtTask = buildTaskFromRow(row);
           existing.vessel = builtTask.vessel;
           existing.district = builtTask.district;
@@ -229,6 +232,8 @@ export function handleImportConfirm(db, input, send, res) {
         db.tasks.push(task);
         existingTaskIds.add(task.id);
       }
+
+      auditSnapshots.push({ task, isUpdate, beforeSnapshot });
 
       successCount++;
       if (isUpdate) {
@@ -261,22 +266,18 @@ export function handleImportConfirm(db, input, send, res) {
   });
 
   return saveDb(db).then(async () => {
-    for (const result of results) {
-      if (result.success) {
-        const task = db.tasks.find((t) => t.id === result.taskId);
-        if (task) {
-          const isUpdate = result.status === "updated";
-          await recordAuditEvent({
-            objectType: AUDIT_OBJECT_TYPES.TASK,
-            objectId: task.id,
-            action: isUpdate ? AUDIT_ACTIONS.IMPORT_UPDATE : AUDIT_ACTIONS.IMPORT_CREATE,
-            after: task,
-            operator: null,
-            note: `批量导入${isUpdate ? "更新" : "创建"}任务 - 会话: ${sessionId}`,
-            rollbackable: false
-          });
-        }
-      }
+    for (const snapshot of auditSnapshots) {
+      const { task, isUpdate, beforeSnapshot } = snapshot;
+      await recordAuditEvent({
+        objectType: AUDIT_OBJECT_TYPES.TASK,
+        objectId: task.id,
+        action: isUpdate ? AUDIT_ACTIONS.IMPORT_UPDATE : AUDIT_ACTIONS.IMPORT_CREATE,
+        before: beforeSnapshot,
+        after: task,
+        operator: null,
+        note: `批量导入${isUpdate ? "更新" : "创建"}任务 - 会话: ${sessionId}`,
+        rollbackable: false
+      });
     }
 
     return send(res, 200, {
@@ -324,10 +325,18 @@ export function handleImportSessionCancel(db, sessionId, send, res) {
   if (result.error === "already_submitted") {
     return send(res, 409, { error: "already_submitted", message: "已提交的会话不能取消" });
   }
-  return send(res, 200, {
+  return recordAuditEvent({
+    objectType: AUDIT_OBJECT_TYPES.IMPORT_SESSION,
+    objectId: sessionId,
+    action: AUDIT_ACTIONS.CANCEL,
+    after: result,
+    operator: null,
+    note: "取消导入会话",
+    rollbackable: false
+  }).then(() => send(res, 200, {
     id: result.id,
     status: result.status,
     cancelledAt: result.cancelledAt,
     message: "导入会话已取消"
-  });
+  }));
 }
