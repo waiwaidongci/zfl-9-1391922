@@ -1,19 +1,75 @@
 import { saveDb } from "../utils/db.js";
 import { recommendPilots, pilotFitsCheck } from "../utils/recommendation.js";
-import { DEFAULT_TASK_STATUS, ASSIGNED_TASK_STATUS } from "../config/scheduling-rules.js";
+import { DEFAULT_TASK_STATUS, ASSIGNED_TASK_STATUS, isActiveTaskStatus } from "../config/scheduling-rules.js";
 import { handleChangeRequestCreate } from "./change-requests.js";
 import { recordAuditEvent, AUDIT_OBJECT_TYPES, AUDIT_ACTIONS } from "../services/audit.js";
+import { validateTaskListParams } from "../utils/validator.js";
+import { overlaps } from "../utils/time.js";
 
 function addHistory(task, action, note) {
   task.history.push({ at: new Date().toISOString(), action, note });
 }
 
+export function filterTasks(tasks, filters) {
+  let result = tasks;
+
+  if (filters.status !== undefined && filters.status !== null) {
+    result = result.filter((task) => task.status === filters.status);
+  }
+
+  if (filters.district !== undefined && filters.district !== null) {
+    result = result.filter((task) => task.district === filters.district);
+  }
+
+  if (filters.activeOnly === true) {
+    result = result.filter((task) => isActiveTaskStatus(task.status));
+  }
+
+  if (filters.pilotId !== undefined && filters.pilotId !== null) {
+    result = result.filter((task) => task.pilotId === filters.pilotId);
+  }
+
+  if (filters.vesselName !== undefined && filters.vesselName !== null) {
+    const keyword = filters.vesselName.toLowerCase();
+    result = result.filter((task) =>
+      task.vessel && task.vessel.name && task.vessel.name.toLowerCase().includes(keyword)
+    );
+  }
+
+  if (filters.tideWindow !== undefined && filters.tideWindow !== null) {
+    const { start: filterStart, end: filterEnd } = filters.tideWindow;
+    result = result.filter((task) => {
+      if (!task.tideWindow || !task.tideWindow.start || !task.tideWindow.end) return false;
+      const taskStart = task.tideWindow.start;
+      const taskEnd = task.tideWindow.end;
+
+      if (filterStart && filterEnd) {
+        return overlaps(filterStart, filterEnd, taskStart, taskEnd);
+      }
+      if (filterStart) {
+        return new Date(taskEnd) > new Date(filterStart);
+      }
+      if (filterEnd) {
+        return new Date(taskStart) < new Date(filterEnd);
+      }
+      return true;
+    });
+  }
+
+  return result;
+}
+
 export function handleTaskList(db, searchParams, send, res) {
-  const status = searchParams.get("status");
-  const district = searchParams.get("district");
-  let tasks = db.tasks;
-  if (status) tasks = tasks.filter((task) => task.status === status);
-  if (district) tasks = tasks.filter((task) => task.district === district);
+  const validation = validateTaskListParams(searchParams);
+  if (!validation.valid) {
+    return send(res, 400, {
+      error: "invalid_filters",
+      message: "筛选参数无效",
+      errors: validation.errors
+    });
+  }
+
+  const tasks = filterTasks(db.tasks, validation.filters);
   return send(res, 200, tasks);
 }
 

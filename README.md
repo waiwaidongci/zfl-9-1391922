@@ -47,6 +47,79 @@ curl "http://localhost:3009/config/validate?district=东港&grade=C"
 }
 ```
 
+## 任务列表查询模块
+
+### 调度员常用查询参数
+
+任务列表接口支持以下筛选参数，可任意组合使用：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `status` | string | 否 | 按任务状态筛选：pending / assigned / in_progress / completed / cancelled / done |
+| `district` | string | 否 | 按港区筛选：东港 / 北槽 / 西港 |
+| `tideWindowStart` | string(ISO) | 否 | 潮汐窗口起始时间，返回潮汐窗口结束时间晚于此时间的任务 |
+| `tideWindowEnd` | string(ISO) | 否 | 潮汐窗口结束时间，返回潮汐窗口起始时间早于此时间的任务 |
+| `pilotId` | string | 否 | 按引航员ID筛选（精确匹配） |
+| `vesselName` | string | 否 | 按船名关键词筛选（不区分大小写，模糊匹配） |
+| `activeOnly` | boolean | 否 | 是否只看活跃任务（pending/assigned/in_progress），值为 true/false |
+
+---
+
+### 调用示例
+
+```bash
+# 查询所有任务（无筛选）
+curl "http://localhost:3009/tasks"
+
+# 按状态和港区筛选（原有功能）
+curl "http://localhost:3009/tasks?status=pending&district=东港"
+
+# 按潮汐窗口范围筛选（与给定窗口有重叠的任务）
+curl "http://localhost:3009/tasks?tideWindowStart=2026-06-14T00:00:00.000Z&tideWindowEnd=2026-06-15T00:00:00.000Z"
+
+# 只看某日期之后有潮汐窗口的任务
+curl "http://localhost:3009/tasks?tideWindowStart=2026-06-15T00:00:00.000Z"
+
+# 按引航员ID筛选（查看P-01的所有任务）
+curl "http://localhost:3009/tasks?pilotId=P-01"
+
+# 按船名关键词筛选（模糊匹配，不区分大小写）
+curl "http://localhost:3009/tasks?vesselName=远泰"
+curl "http://localhost:3009/tasks?vesselName=HAI"
+
+# 只看活跃任务（未完成、未取消的任务）
+curl "http://localhost:3009/tasks?activeOnly=true"
+
+# 组合查询：东港+活跃+船名含"远泰"+6月14日当天窗口
+curl "http://localhost:3009/tasks?district=东港&activeOnly=true&vesselName=远泰&tideWindowStart=2026-06-14T00:00:00.000Z&tideWindowEnd=2026-06-15T00:00:00.000Z"
+```
+
+**参数错误返回示例（400）**：
+
+```json
+{
+  "error": "invalid_filters",
+  "message": "筛选参数无效",
+  "errors": [
+    { "field": "status", "message": "无效的任务状态: xxx", "code": "invalid_status" },
+    { "field": "tideWindowStart", "message": "潮汐窗口起始时间无效", "code": "invalid_tide_window_start" }
+  ]
+}
+```
+
+---
+
+### 活跃任务说明
+
+`activeOnly=true` 会过滤掉以下状态的任务：
+- `completed`（已完成）
+- `done`（已办结）
+- `cancelled`（已取消）
+
+即保留：`pending` / `assigned` / `in_progress` 三种状态。
+
+---
+
 ## 任务变更审批模块
 
 **核心规则**：已分配（`assigned`）状态的任务，修改**潮汐窗口**、**泊位计划**或**取消任务**时，不能直接生效，必须先创建变更申请，待审批通过后才会更新原任务。

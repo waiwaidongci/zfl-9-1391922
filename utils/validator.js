@@ -1,4 +1,4 @@
-import { isValidDistrict, isValidShipType, isValidGrade } from "../config/scheduling-rules.js";
+import { isValidDistrict, isValidShipType, isValidGrade, isValidTaskStatus } from "../config/scheduling-rules.js";
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -202,6 +202,91 @@ export function validateTaskBatch(rows, existingTaskIds = new Set()) {
     duplicateIdRows,
     allWarnings
   };
+}
+
+export function validateTaskListParams(params) {
+  const result = {
+    valid: true,
+    filters: {},
+    errors: [],
+    warnings: []
+  };
+
+  const status = params.get("status");
+  if (status !== null) {
+    if (isValidTaskStatus(status)) {
+      result.filters.status = status;
+    } else {
+      result.errors.push({ field: "status", message: `无效的任务状态: ${status}`, code: "invalid_status" });
+    }
+  }
+
+  const district = params.get("district");
+  if (district !== null) {
+    if (isValidDistrict(district)) {
+      result.filters.district = district;
+    } else {
+      result.errors.push({ field: "district", message: `无效的港区: ${district}`, code: "invalid_district" });
+    }
+  }
+
+  const tideWindowStart = params.get("tideWindowStart");
+  const tideWindowEnd = params.get("tideWindowEnd");
+  if (tideWindowStart !== null || tideWindowEnd !== null) {
+    if (tideWindowStart !== null && !isValidDateString(tideWindowStart)) {
+      result.errors.push({ field: "tideWindowStart", message: "潮汐窗口起始时间无效", code: "invalid_tide_window_start" });
+    }
+    if (tideWindowEnd !== null && !isValidDateString(tideWindowEnd)) {
+      result.errors.push({ field: "tideWindowEnd", message: "潮汐窗口结束时间无效", code: "invalid_tide_window_end" });
+    }
+    if (tideWindowStart !== null && tideWindowEnd !== null && isValidDateString(tideWindowStart) && isValidDateString(tideWindowEnd)) {
+      if (new Date(tideWindowStart) >= new Date(tideWindowEnd)) {
+        result.errors.push({ field: "tideWindow", message: "潮汐窗口结束时间必须晚于起始时间", code: "tide_window_end_before_start" });
+      } else {
+        result.filters.tideWindow = { start: tideWindowStart, end: tideWindowEnd };
+      }
+    } else {
+      if (tideWindowStart !== null && isValidDateString(tideWindowStart)) {
+        result.filters.tideWindow = { start: tideWindowStart, end: null };
+      }
+      if (tideWindowEnd !== null && isValidDateString(tideWindowEnd)) {
+        result.filters.tideWindow = { start: null, end: tideWindowEnd };
+      }
+    }
+  }
+
+  const pilotId = params.get("pilotId");
+  if (pilotId !== null) {
+    if (isNonEmptyString(pilotId)) {
+      result.filters.pilotId = pilotId.trim();
+    } else {
+      result.errors.push({ field: "pilotId", message: "引航员ID不能为空字符串", code: "empty_pilot_id" });
+    }
+  }
+
+  const vesselName = params.get("vesselName");
+  if (vesselName !== null) {
+    if (isNonEmptyString(vesselName)) {
+      result.filters.vesselName = vesselName.trim();
+    } else {
+      result.errors.push({ field: "vesselName", message: "船名关键词不能为空字符串", code: "empty_vessel_name" });
+    }
+  }
+
+  const activeOnly = params.get("activeOnly");
+  if (activeOnly !== null) {
+    const lower = activeOnly.toLowerCase().trim();
+    if (lower === "true" || lower === "1" || lower === "yes") {
+      result.filters.activeOnly = true;
+    } else if (lower === "false" || lower === "0" || lower === "no") {
+      result.filters.activeOnly = false;
+    } else {
+      result.errors.push({ field: "activeOnly", message: "activeOnly 参数应为 true/false", code: "invalid_active_only" });
+    }
+  }
+
+  result.valid = result.errors.length === 0;
+  return result;
 }
 
 let _idCounter = 0;
