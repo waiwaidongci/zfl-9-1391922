@@ -258,8 +258,9 @@ export function handleImportConfirm(db, input, send, res) {
     }
   }
 
+  const beforeSessionSnapshot = JSON.parse(JSON.stringify(session));
   const submittedAt = new Date().toISOString();
-  updateImportSession(sessionId, {
+  const submittedSession = updateImportSession(sessionId, {
     status: "submitted",
     submittedRows: results,
     submittedAt
@@ -279,6 +280,17 @@ export function handleImportConfirm(db, input, send, res) {
         rollbackable: false
       });
     }
+
+    await recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.IMPORT_SESSION,
+      objectId: sessionId,
+      action: AUDIT_ACTIONS.SUBMIT,
+      before: beforeSessionSnapshot,
+      after: submittedSession,
+      operator: input.operator || null,
+      note: `导入会话提交：成功 ${successCount} 条，失败 ${failedCount} 条`,
+      rollbackable: false
+    });
 
     return send(res, 200, {
       sessionId,

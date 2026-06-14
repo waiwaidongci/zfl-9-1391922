@@ -1113,4 +1113,5 @@ curl -X POST "http://localhost:3009/tasks/T-260614-01/rollback/status" \
 | 取消休假记录 | leaveRecord | cancel | 否 |
 | 批量导入创建 | task | import_create | 否 |
 | 批量导入更新 | task | import_update | 否 |
+| 提交导入会话 | importSession | submit | 否 |
 | 取消导入会话 | importSession | cancel | 否 |
