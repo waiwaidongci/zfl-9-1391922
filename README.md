@@ -402,6 +402,422 @@ curl "http://localhost:3009/board/北槽?date=2026-06-14T10:00:00.000Z"
 
 ---
 
+## 批量导入引航申请模块
+
+支持一次性提交多条引航申请数据，先做预检（不污染数据文件），返回逐行校验错误、可创建任务、可能冲突任务和推荐引航员摘要，确认后再真正写入。
+
+### 核心流程
+
+```
+POST /import/tasks (预检) ──→ 返回 sessionId + 预检结果
+        │
+        ▼
+  用户审查预检结果
+        │
+        ├── POST /import/tasks/confirm (确认提交)
+        │       └── 真正写入 tasks，返回逐行结果
+        │
+        └── POST /import/sessions/:sessionId/cancel (取消)
+                └── 作废会话，不写入任何数据
+```
+
+### 关键规则
+
+- **预检不写数据**：`POST /import/tasks` 仅在内存中创建会话，绝不修改 `data/pilot-station.json`
+- **会话有效期**：30分钟，过期自动清理
+- **重复ID处理**：若导入行ID与已有任务ID相同，默认覆盖更新（`overwrite: true`），设为 `false` 则跳过该行
+- **部分失败**：提交时逐行处理，某行失败不影响其他行，最终返回全部结果
+- **单次上限**：200条
+
+---
+
+### 1. 预检导入（POST /import/tasks）
+
+接收一组申请数据，做校验和冲突分析，返回预检结果和会话ID。
+
+```bash
+curl -X POST "http://localhost:3009/import/tasks" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      {
+        "vessel": { "name": "金海轮", "type": "散货船", "imo": "IMO9311003", "length": 190 },
+        "district": "东港",
+        "berthPlan": "靠泊D7",
+        "tideWindow": { "start": "2026-06-18T02:00:00.000Z", "end": "2026-06-18T05:00:00.000Z" },
+        "requiredGrade": "B",
+        "note": "东港散货船批量导入"
+      },
+      {
+        "vessel": { "name": "华星号", "type": "油轮", "imo": "IMO9412005", "length": 230 },
+        "district": "西港",
+        "berthPlan": "靠泊W4",
+        "tideWindow": { "start": "2026-06-18T06:00:00.000Z", "end": "2026-06-18T09:00:00.000Z" },
+        "requiredGrade": "A",
+        "note": "西港油轮批量导入"
+      },
+      {
+        "vessel": { "name": "", "type": "无效船型" },
+        "district": "南极",
+        "tideWindow": { "start": "invalid" },
+        "requiredGrade": "C"
+      }
+    ]
+  }'
+```
+
+**返回示例（200 OK）**：
+
+```json
+{
+  "sessionId": "IMP-1718325600000-A1B2C3D4",
+  "previewedAt": "2026-06-14T09:00:00.000Z",
+  "expiresAt": "2026-06-14T09:30:00.000Z",
+  "status": "previewed",
+  "totalCount": 3,
+  "validCount": 2,
+  "errorCount": 1,
+  "warningCount": 0,
+  "validRowIndices": [0, 1],
+  "canConfirm": true,
+  "rowErrors": [
+    {
+      "rowIndex": 2,
+      "errors": [
+        { "field": "vessel.name", "message": "船名不能为空", "code": "missing_vessel_name" },
+        { "field": "vessel.type", "message": "无效的船型: 无效船型", "code": "invalid_vessel_type" },
+        { "field": "district", "message": "无效的港区: 南极", "code": "invalid_district" },
+        { "field": "tideWindow.start", "message": "潮汐窗口起始时间无效", "code": "invalid_window_start" },
+        { "field": "tideWindow.end", "message": "潮汐窗口结束时间无效", "code": "invalid_window_end" },
+        { "field": "requiredGrade", "message": "无效的资质等级: C", "code": "invalid_grade" }
+      ],
+      "warnings": []
+    }
+  ],
+  "rowWarnings": [],
+  "creatable": [
+    {
+      "rowIndex": 0,
+      "taskId": "T-1718325600000-EFGH",
+      "vesselName": "金海轮",
+      "district": "东港",
+      "tideWindow": { "start": "2026-06-18T02:00:00.000Z", "end": "2026-06-18T05:00:00.000Z" },
+      "topPilot": { "pilotId": "P-01", "name": "沈望", "score": 85.0 },
+      "eligiblePilotCount": 2
+    },
+    {
+      "rowIndex": 1,
+      "taskId": "T-1718325600001-IJKL",
+      "vesselName": "华星号",
+      "district": "西港",
+      "tideWindow": { "start": "2026-06-18T06:00:00.000Z", "end": "2026-06-18T09:00:00.000Z" },
+      "topPilot": { "pilotId": "P-02", "name": "何澜", "score": 90.0 },
+      "eligiblePilotCount": 1
+    }
+  ],
+  "conflicting": [],
+  "creatableCount": 2,
+  "conflictingCount": 0,
+  "conflictSummary": {
+    "totalConflictingTasks": 0,
+    "byDistrict": [],
+    "totalExistingConflicts": 0,
+    "totalBatchConflicts": 0,
+    "canAutoCreate": 2,
+    "needsResolution": 0
+  },
+  "pilotSummary": {
+    "totalPilots": 5,
+    "availablePilots": 4,
+    "freePilots": 1,
+    "busyPilots": 0,
+    "pilots": []
+  },
+  "duplicateIdsWithinBatch": []
+}
+```
+
+**响应字段**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `sessionId` | string | 会话ID，确认提交时需回传 |
+| `previewedAt` | string(ISO) | 预检时间 |
+| `expiresAt` | string(ISO) | 会话过期时间 |
+| `status` | string | 会话状态：`previewed` |
+| `totalCount` | number | 总行数 |
+| `validCount` | number | 校验通过行数 |
+| `errorCount` | number | 校验失败行数 |
+| `warningCount` | number | 警告总数 |
+| `validRowIndices` | number[] | 校验通过的行索引列表 |
+| `canConfirm` | boolean | 是否有可确认提交的有效行 |
+| `rowErrors` | array | 逐行错误详情 |
+| `rowWarnings` | array | 逐行警告详情 |
+| `creatable` | array | 可直接创建的任务列表 |
+| `conflicting` | array | 存在冲突的任务列表（含冲突详情和解决建议） |
+| `creatableCount` | number | 可创建任务数 |
+| `conflictingCount` | number | 冲突任务数 |
+| `conflictSummary` | object | 冲突摘要（按港区统计） |
+| `pilotSummary` | object | 引航员工作负载摘要 |
+| `duplicateIdsWithinBatch` | array | 批次内重复ID列表 |
+
+**请求体格式**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `tasks` | array | 是 | 申请数据数组，每项为一条任务（也支持顶层字段名 `rows`，或直接传数组） |
+| `tasks[].id` | string | 否 | 指定任务ID，仅允许字母、数字、`_`、`-`，最长64字符，不提供则自动生成 |
+| `tasks[].vessel.name` | string | 是 | 船名 |
+| `tasks[].vessel.type` | string | 是 | 船型（散货船/集装箱船/油轮/化学品船） |
+| `tasks[].vessel.imo` | string | 否 | IMO编号（建议格式：IMO+7位数字） |
+| `tasks[].vessel.length` | number | 否 | 船舶长度（米，0~500） |
+| `tasks[].district` | string | 是 | 港区（东港/北槽/西港） |
+| `tasks[].berthPlan` | string | 否 | 泊位计划 |
+| `tasks[].tideWindow.start` | string | 是 | 潮汐窗口起始时间（ISO 8601） |
+| `tasks[].tideWindow.end` | string | 是 | 潮汐窗口结束时间（ISO 8601） |
+| `tasks[].requiredGrade` | string | 是 | 资质等级（A/B） |
+| `tasks[].note` | string | 否 | 备注（必须为字符串，如提供） |
+
+**校验规则**：
+- 错误（`rowErrors`）：阻断该行，不会进入可创建/冲突列表
+- 警告（`rowWarnings`）：不阻断，但提示潜在问题（如IMO格式异常、窗口过短/过长、时间过远）
+- 任务ID格式：仅允许 `[A-Za-z0-9_-]`，最长64字符，类型必须为字符串
+- 批次内重复ID：标记为错误（`batch_duplicate_id`）
+- 与已有任务重复ID：标记为警告（`duplicate_id`），确认提交时可选择覆盖或跳过
+- `note`/`berthPlan` 字段：如提供则必须为字符串类型
+
+**请求级错误码（400）**：
+
+| code | 说明 |
+|------|------|
+| `body_not_object` | 请求体不是JSON对象 |
+| `tasks_null` | `tasks` 字段为 null |
+| `tasks_not_array` | `tasks` 字段不是数组 |
+| `rows_null` | `rows` 字段为 null |
+| `rows_not_array` | `rows` 字段不是数组 |
+| `missing_tasks_field` | 请求体不含 `tasks` 或 `rows` 字段 |
+| `empty_batch` | 数组为空 |
+| `batch_too_large` | 数组超过200条 |
+
+**行级错误码**：
+
+| code | 说明 |
+|------|------|
+| `invalid_row_format` | 行数据不是对象 |
+| `id_not_string` | 任务ID不是字符串 |
+| `empty_id` | 任务ID为空白字符串 |
+| `invalid_id_format` | 任务ID含非法字符 |
+| `id_too_long` | 任务ID超过64字符 |
+| `batch_duplicate_id` | 批次内重复ID |
+| `duplicate_id` | 与已有任务ID重复（警告级） |
+| `missing_vessel` | 船舶信息缺失 |
+| `missing_vessel_name` | 船名为空 |
+| `missing_vessel_type` | 船型为空 |
+| `invalid_vessel_type` | 无效的船型 |
+| `missing_district` | 港区为空 |
+| `invalid_district` | 无效的港区 |
+| `missing_tide_window` | 潮汐窗口缺失 |
+| `invalid_window_start` | 起始时间无效 |
+| `invalid_window_end` | 结束时间无效 |
+| `window_end_before_start` | 结束时间早于起始时间 |
+| `missing_grade` | 资质等级为空 |
+| `invalid_grade` | 无效的资质等级 |
+| `invalid_berth_plan` | 泊位计划不是字符串 |
+| `invalid_note` | 备注不是字符串 |
+
+---
+
+### 2. 确认提交（POST /import/tasks/confirm）
+
+用预检返回的 `sessionId` 确认提交，真正写入任务数据。
+
+```bash
+# 提交全部有效行（默认覆盖已有任务）
+curl -X POST "http://localhost:3009/import/tasks/confirm" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "IMP-1718325600000-A1B2C3D4"
+  }'
+```
+
+```bash
+# 仅提交指定行，且不覆盖已有任务
+curl -X POST "http://localhost:3009/import/tasks/confirm" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "IMP-1718325600000-A1B2C3D4",
+    "rows": [0, 1],
+    "overwrite": false
+  }'
+```
+
+**返回示例（200 OK）**：
+
+```json
+{
+  "sessionId": "IMP-1718325600000-A1B2C3D4",
+  "totalRequested": 2,
+  "successCount": 2,
+  "createdCount": 2,
+  "updatedCount": 0,
+  "failedCount": 0,
+  "results": [
+    {
+      "rowIndex": 0,
+      "taskId": "T-1718325600000-EFGH",
+      "status": "created",
+      "success": true
+    },
+    {
+      "rowIndex": 1,
+      "taskId": "T-1718325600001-IJKL",
+      "status": "created",
+      "success": true
+    }
+  ]
+}
+```
+
+**请求体格式**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `sessionId` | string | 是 | 预检返回的会话ID |
+| `rows` | number[] | 否 | 指定提交的行索引，不提供则提交全部有效行 |
+| `overwrite` | boolean | 否 | 是否覆盖已有任务（默认 true） |
+
+**错误码**：
+
+| HTTP状态 | error | 说明 |
+|----------|-------|------|
+| 400 | `missing_session_id` | 未提供 sessionId |
+| 400 | `no_valid_rows` | 无可提交的有效行 |
+| 404 | `session_not_found` | 会话不存在或已过期 |
+| 409 | `already_submitted` | 会话已提交过 |
+| 410 | `session_cancelled` | 会话已取消 |
+
+---
+
+### 3. 查询会话详情（GET /import/sessions/:sessionId）
+
+```bash
+curl "http://localhost:3009/import/sessions/IMP-1718325600000-A1B2C3D4"
+```
+
+**返回示例**：
+
+```json
+{
+  "id": "IMP-1718325600000-A1B2C3D4",
+  "createdAt": "2026-06-14T09:00:00.000Z",
+  "expiresAt": "2026-06-14T09:30:00.000Z",
+  "status": "submitted",
+  "totalCount": 3,
+  "validCount": 2,
+  "errorCount": 1,
+  "creatableCount": 2,
+  "conflictingCount": 0,
+  "canConfirm": false,
+  "submittedAt": "2026-06-14T09:05:00.000Z",
+  "cancelledAt": null,
+  "submittedResults": [
+    { "rowIndex": 0, "taskId": "T-1718325600000-EFGH", "status": "created", "success": true },
+    { "rowIndex": 1, "taskId": "T-1718325600001-IJKL", "status": "created", "success": true }
+  ]
+}
+```
+
+---
+
+### 4. 取消会话（POST /import/sessions/:sessionId/cancel）
+
+```bash
+curl -X POST "http://localhost:3009/import/sessions/IMP-1718325600000-A1B2C3D4/cancel"
+```
+
+**返回示例（200 OK）**：
+
+```json
+{
+  "id": "IMP-1718325600000-A1B2C3D4",
+  "status": "cancelled",
+  "cancelledAt": "2026-06-14T09:10:00.000Z",
+  "message": "导入会话已取消"
+}
+```
+
+> 已提交的会话不可取消（返回 409）。
+
+---
+
+### 5. 冲突判定与解决建议
+
+当导入行与已有任务或批次内其他行在**同一港区**且**潮汐窗口重叠**时，标记为冲突：
+
+| 冲突类型 | conflictType | 说明 |
+|----------|-------------|------|
+| 已分配引航员的任务冲突 | `pilot_assigned` | 同港区同时间段已有引航员在执行任务 |
+| 港区时间冲突 | `district_time` | 同港区同时间段已有未分配的任务 |
+| 批次内冲突 | `batch_conflict` | 导入批次内多条行相互冲突 |
+
+每条冲突附带解决建议（`resolutions`）：
+
+| suggestion | 说明 |
+|------------|------|
+| `reassign_or_reschedule` | 重新分配引航员或调整时间窗口 |
+| `reschedule_batch_row` | 错开批次内行的潮汐窗口 |
+| `reschedule_or_coordinate` | 调整窗口或与调度协调 |
+
+---
+
+### 6. 引航员工作负载摘要
+
+预检结果中的 `pilotSummary` 展示每位引航员的当前负载和导入后预估：
+
+| 字段 | 说明 |
+|------|------|
+| `workloadLevel` | 负载等级：`free`(0任务) / `normal`(1任务) / `busy`(2任务) / `overloaded`(3+任务) |
+| `canTakeNewCount` | 可承接的导入任务数（基于资质和空闲时段评估） |
+| `totalAfterImport` | 导入后预估总任务数 |
+
+---
+
+### 完整调用示例
+
+```bash
+# 步骤1：预检
+SESSION_ID=$(curl -s -X POST "http://localhost:3009/import/tasks" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      {
+        "vessel": { "name": "金海轮", "type": "散货船" },
+        "district": "东港",
+        "tideWindow": { "start": "2026-06-20T02:00:00.000Z", "end": "2026-06-20T05:00:00.000Z" },
+        "requiredGrade": "B"
+      },
+      {
+        "vessel": { "name": "华星号", "type": "油轮" },
+        "district": "西港",
+        "tideWindow": { "start": "2026-06-20T06:00:00.000Z", "end": "2026-06-20T09:00:00.000Z" },
+        "requiredGrade": "A"
+      }
+    ]
+  }' | python3 -c "import sys,json; print(json.load(sys.stdin)['sessionId'])")
+
+echo "Session ID: $SESSION_ID"
+
+# 步骤2：确认提交
+curl -X POST "http://localhost:3009/import/tasks/confirm" \
+  -H "Content-Type: application/json" \
+  -d "{\"sessionId\": \"$SESSION_ID\"}"
+
+# 步骤3：查看会话状态
+curl "http://localhost:3009/import/sessions/$SESSION_ID"
+```
+
+---
+
 ## 接口调用示例
 
 ### 查询值班日历

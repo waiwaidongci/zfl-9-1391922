@@ -1,33 +1,55 @@
 import { saveDb } from "../utils/db.js";
 import { validateTaskBatch, buildTaskFromRow } from "../utils/validator.js";
 import { analyzeImportBatch } from "../services/candidate-reuse.js";
-import { createImportSession, getImportSession, updateImportSession } from "../services/import-session.js";
+import { createImportSession, getImportSession, updateImportSession, cancelImportSession } from "../services/import-session.js";
 import { DEFAULT_TASK_STATUS } from "../config/scheduling-rules.js";
 
 function addHistory(task, action, note) {
   task.history.push({ at: new Date().toISOString(), action, note });
 }
 
+function extractRows(input) {
+  if (input == null || typeof input !== "object") {
+    return { rows: null, error: { error: "invalid_input", message: "请求体必须为JSON对象，包含 tasks 数组", code: "body_not_object" } };
+  }
+  if (Array.isArray(input)) {
+    return { rows: input, error: null };
+  }
+  if ("tasks" in input) {
+    if (input.tasks == null) {
+      return { rows: null, error: { error: "invalid_input", message: "tasks 字段不能为 null", code: "tasks_null" } };
+    }
+    if (!Array.isArray(input.tasks)) {
+      return { rows: null, error: { error: "invalid_input", message: `tasks 字段必须为数组，实际为 ${typeof input.tasks}`, code: "tasks_not_array" } };
+    }
+    return { rows: input.tasks, error: null };
+  }
+  if ("rows" in input) {
+    if (input.rows == null) {
+      return { rows: null, error: { error: "invalid_input", message: "rows 字段不能为 null", code: "rows_null" } };
+    }
+    if (!Array.isArray(input.rows)) {
+      return { rows: null, error: { error: "invalid_input", message: `rows 字段必须为数组，实际为 ${typeof input.rows}`, code: "rows_not_array" } };
+    }
+    return { rows: input.rows, error: null };
+  }
+  return { rows: null, error: { error: "invalid_input", message: "请求体必须包含 tasks 或 rows 字段", code: "missing_tasks_field" } };
+}
+
 export function handleImportPreview(db, input, send, res) {
-  const rows = input?.tasks || input?.rows || input;
-
-  if (!Array.isArray(rows)) {
-    return send(res, 400, { error: "invalid_input", message: "请求体必须包含 tasks 或 rows 数组" });
-  }
-
-  if (rows.length === 0) {
-    return send(res, 400, { error: "empty_batch", message: "导入数据不能为空" });
-  }
-
-  if (rows.length > 500) {
-    return send(res, 400, { error: "batch_too_large", message: "单次导入不能超过 500 条" });
+  const { rows, error: extractError } = extractRows(input);
+  if (extractError) {
+    return send(res, 400, extractError);
   }
 
   const existingTaskIds = new Set(db.tasks.map((t) => t.id));
   const validation = validateTaskBatch(rows, existingTaskIds);
 
+  if (validation.valid === false) {
+    return send(res, 400, { error: "batch_validation_failed", message: validation.error, code: validation.code });
+  }
+
   const validRows = validation.validRows;
-  const validRowData = validRows.map((i) => rows[i]);
 
   let analysis = null;
   if (validRows.length > 0) {
@@ -35,46 +57,83 @@ export function handleImportPreview(db, input, send, res) {
   }
 
   const rowErrors = validation.rowResults
+    .filter((r) => !r.valid)
     .map((r) => ({
       rowIndex: r.rowIndex,
-      valid: r.valid,
-      errors: r.errors || [],
+      errors: r.errors,
       warnings: r.warnings || []
     }));
+
+  const rowWarnings = validation.rowResults
+    .filter((r) => r.valid && r.warnings && r.warnings.length > 0)
+    .map((r) => ({
+      rowIndex: r.rowIndex,
+      warnings: r.warnings
+    }));
+
+  const conflictSummary = analysis?.conflictSummary || {
+    totalConflictingTasks: 0,
+    byDistrict: [],
+    totalExistingConflicts: 0,
+    totalBatchConflicts: 0,
+    canAutoCreate: validation.validCount,
+    needsResolution: 0
+  };
+
+  const pilotSummary = analysis?.pilotSummary || { totalPilots: db.pilots.length, availablePilots: 0, freePilots: 0, busyPilots: 0, pilots: [] };
 
   const previewResult = {
     totalCount: validation.totalCount,
     validCount: validation.validCount,
     errorCount: validation.errorCount,
-    warningCount: validation.rowResults.reduce((sum, r) => sum + (r.warnings?.length || 0), 0),
-    validRows: validation.validRows,
-    duplicateExistingIds: validation.duplicateExistingIds || [],
-    batchDuplicateIds: validation.batchDuplicateIds || [],
+    warningCount: validation.warningCount || 0,
+    validRowIndices: validRows,
     rowErrors,
+    rowWarnings,
     creatable: analysis?.creatable || [],
     conflicting: analysis?.conflicting || [],
     creatableCount: analysis?.creatableCount || 0,
     conflictingCount: analysis?.conflictingCount || 0,
-    pilotSummary: analysis?.pilotSummary || { totalPilots: 0, availablePilots: 0, pilots: [] }
+    conflictSummary,
+    pilotSummary,
+    duplicateIdsWithinBatch: validation.duplicateIdsWithinBatch || [],
+    canConfirm: validation.validCount > 0
   };
 
   const session = createImportSession(rows, previewResult);
+  const previewedAt = session.createdAt;
 
   return send(res, 200, {
     sessionId: session.id,
+    previewedAt,
     expiresAt: session.expiresAt,
-    ...previewResult,
-    validRows: undefined
+    status: session.status,
+    ...previewResult
   });
 }
 
-export function handleImportSubmit(db, input, send, res) {
-  const sessionId = input?.sessionId;
-  const selectedRowIndices = input?.rows || input?.selectedRows || null;
-  const updateMode = input?.updateMode === true;
+export function handleImportConfirm(db, input, send, res) {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) {
+    return send(res, 400, { error: "invalid_input", message: "请求体必须为JSON对象，包含 sessionId", code: "body_not_object" });
+  }
 
-  if (!sessionId) {
-    return send(res, 400, { error: "missing_session_id", message: "必须提供 sessionId" });
+  const sessionId = input.sessionId;
+  if (sessionId == null || typeof sessionId !== "string" || sessionId.trim() === "") {
+    return send(res, 400, { error: "missing_session_id", message: "必须提供非空字符串 sessionId", code: "session_id_empty" });
+  }
+
+  const overwrite = input.overwrite !== false;
+
+  const selectedRowIndices = input.rows ?? input.selectedRows ?? null;
+  if (selectedRowIndices != null && !Array.isArray(selectedRowIndices)) {
+    return send(res, 400, { error: "invalid_rows", message: "rows / selectedRows 必须为数组", code: "rows_not_array" });
+  }
+  if (Array.isArray(selectedRowIndices)) {
+    for (let i = 0; i < selectedRowIndices.length; i++) {
+      if (typeof selectedRowIndices[i] !== "number" || !Number.isInteger(selectedRowIndices[i]) || selectedRowIndices[i] < 0) {
+        return send(res, 400, { error: "invalid_row_index", message: `rows[${i}] 必须为非负整数，实际为 ${JSON.stringify(selectedRowIndices[i])}`, code: "row_index_invalid" });
+      }
+    }
   }
 
   const session = getImportSession(sessionId);
@@ -86,26 +145,30 @@ export function handleImportSubmit(db, input, send, res) {
     return send(res, 409, { error: "already_submitted", message: "该会话已提交过" });
   }
 
+  if (session.status === "cancelled") {
+    return send(res, 410, { error: "session_cancelled", message: "该会话已取消" });
+  }
+
   let rowIndicesToSubmit;
-  if (selectedRowIndices && Array.isArray(selectedRowIndices) && selectedRowIndices.length > 0) {
-    const validSet = new Set(session.preview.validRows || []);
-    rowIndicesToSubmit = selectedRowIndices
-      .filter((idx) => typeof idx === "number" && idx >= 0 && idx < session.rows.length)
-      .filter((idx) => validSet.has(idx));
+  if (Array.isArray(selectedRowIndices) && selectedRowIndices.length > 0) {
+    const validSet = new Set(session.preview.validRowIndices);
+    const outOfRange = selectedRowIndices.filter((idx) => !validSet.has(idx));
+    if (outOfRange.length > 0) {
+      return send(res, 400, { error: "invalid_row_selection", message: `行索引 ${outOfRange.join(", ")} 不在有效行范围内`, code: "row_out_of_valid_range", invalidIndices: outOfRange });
+    }
+    rowIndicesToSubmit = [...selectedRowIndices];
   } else {
-    rowIndicesToSubmit = session.preview.validRows || [];
+    rowIndicesToSubmit = [...session.preview.validRowIndices];
   }
 
   if (rowIndicesToSubmit.length === 0) {
     return send(res, 400, { error: "no_valid_rows", message: "没有可提交的有效行" });
   }
 
-  const existingTaskIds = new Map(db.tasks.map((t, idx) => [t.id, idx]));
-  const processedIds = new Set();
+  const existingTaskIds = new Set(db.tasks.map((t) => t.id));
   const results = [];
   let successCount = 0;
   let failedCount = 0;
-  let skippedCount = 0;
   let createdCount = 0;
   let updatedCount = 0;
 
@@ -116,54 +179,32 @@ export function handleImportSubmit(db, input, send, res) {
       let task;
       let isUpdate = false;
 
-      if (row.id) {
-        if (processedIds.has(row.id)) {
-          skippedCount++;
+      if (row.id && existingTaskIds.has(row.id)) {
+        if (!overwrite) {
           results.push({
             rowIndex,
             taskId: row.id,
             success: false,
-            skipped: true,
-            status: "skipped",
-            error: `批次内重复处理的任务ID: ${row.id}`
+            error: "任务ID已存在且未启用覆盖模式",
+            code: "duplicate_id_skip"
           });
+          failedCount++;
           continue;
         }
 
-        if (existingTaskIds.has(row.id)) {
-          if (!updateMode) {
-            skippedCount++;
-            results.push({
-              rowIndex,
-              taskId: row.id,
-              success: false,
-              skipped: true,
-              status: "skipped",
-              error: `任务ID已存在，跳过: ${row.id} (如需更新请设置 updateMode=true)`,
-              conflictType: "existing_id"
-            });
-            continue;
-          }
-
-          const existingIndex = existingTaskIds.get(row.id);
-          if (existingIndex >= 0) {
-            const existing = db.tasks[existingIndex];
-            const builtTask = buildTaskFromRow(row);
-            existing.vessel = builtTask.vessel;
-            existing.district = builtTask.district;
-            existing.berthPlan = builtTask.berthPlan;
-            existing.tideWindow = builtTask.tideWindow;
-            existing.requiredGrade = builtTask.requiredGrade;
-            if (row.note) existing.note = row.note;
-            addHistory(existing, "updated", row.note || "批量导入更新");
-            task = existing;
-            isUpdate = true;
-            updatedCount++;
-          }
-        }
-
-        if (!isUpdate) {
-          processedIds.add(row.id);
+        const existingIndex = db.tasks.findIndex((t) => t.id === row.id);
+        if (existingIndex >= 0) {
+          const existing = db.tasks[existingIndex];
+          const builtTask = buildTaskFromRow(row);
+          existing.vessel = builtTask.vessel;
+          existing.district = builtTask.district;
+          existing.berthPlan = builtTask.berthPlan;
+          existing.tideWindow = builtTask.tideWindow;
+          existing.requiredGrade = builtTask.requiredGrade;
+          if (builtTask.note) existing.note = builtTask.note;
+          addHistory(existing, "updated", row.note || "批量导入更新");
+          task = existing;
+          isUpdate = true;
         }
       }
 
@@ -177,58 +218,47 @@ export function handleImportSubmit(db, input, send, res) {
         };
         addHistory(task, "created", row.note || "批量导入创建");
         db.tasks.push(task);
-        existingTaskIds.set(task.id, db.tasks.length - 1);
-        if (task.id) processedIds.add(task.id);
-        createdCount++;
+        existingTaskIds.add(task.id);
       }
 
       successCount++;
+      if (isUpdate) {
+        updatedCount++;
+      } else {
+        createdCount++;
+      }
       results.push({
         rowIndex,
         taskId: task.id,
         status: isUpdate ? "updated" : "created",
-        success: true,
-        vesselName: task.vessel?.name || ""
+        success: true
       });
     } catch (error) {
       failedCount++;
       results.push({
         rowIndex,
-        taskId: row?.id || null,
         success: false,
         error: error.message,
-        errorStack: process.env.NODE_ENV === "development" ? error.stack : undefined
+        code: "submit_error"
       });
     }
   }
 
-  const actualSkipped = rowIndicesToSubmit.length - successCount - failedCount;
-  if (actualSkipped !== skippedCount) skippedCount = actualSkipped;
-
+  const submittedAt = new Date().toISOString();
   updateImportSession(sessionId, {
     status: "submitted",
     submittedRows: results,
-    submittedAt: new Date().toISOString(),
-    summary: {
-      totalRequested: rowIndicesToSubmit.length,
-      successCount,
-      createdCount,
-      updatedCount,
-      failedCount,
-      skippedCount
-    }
+    submittedAt
   });
 
   return saveDb(db).then(() => send(res, 200, {
     sessionId,
+    submittedAt,
     totalRequested: rowIndicesToSubmit.length,
     successCount,
     createdCount,
     updatedCount,
     failedCount,
-    skippedCount,
-    partialSuccess: failedCount > 0 || skippedCount > 0,
-    allSuccess: failedCount === 0 && skippedCount === 0,
     results
   }));
 }
@@ -244,20 +274,30 @@ export function handleImportSessionDetail(db, sessionId, send, res) {
     createdAt: session.createdAt,
     expiresAt: session.expiresAt,
     status: session.status,
-    preview: {
-      totalCount: session.preview.totalCount,
-      validCount: session.preview.validCount,
-      errorCount: session.preview.errorCount,
-      warningCount: session.preview.warningCount || 0,
-      creatableCount: session.preview.creatableCount || 0,
-      conflictingCount: session.preview.conflictingCount || 0,
-      duplicateExistingIds: session.preview.duplicateExistingIds || [],
-      batchDuplicateIds: session.preview.batchDuplicateIds || []
-    },
-    submission: session.status === "submitted" ? {
-      submittedAt: session.submittedAt,
-      summary: session.summary || null,
-      rowCount: session.submittedRows?.length || 0
-    } : null
+    totalCount: session.metadata.rowCount,
+    validCount: session.metadata.validCount,
+    errorCount: session.metadata.errorCount,
+    creatableCount: session.preview.creatableCount,
+    conflictingCount: session.preview.conflictingCount,
+    canConfirm: session.preview.canConfirm,
+    submittedAt: session.submittedAt || null,
+    cancelledAt: session.cancelledAt || null,
+    submittedResults: session.status === "submitted" ? session.submittedRows : null
+  });
+}
+
+export function handleImportSessionCancel(db, sessionId, send, res) {
+  const result = cancelImportSession(sessionId);
+  if (!result) {
+    return send(res, 404, { error: "session_not_found", message: "导入会话不存在或已过期" });
+  }
+  if (result.error === "already_submitted") {
+    return send(res, 409, { error: "already_submitted", message: "已提交的会话不能取消" });
+  }
+  return send(res, 200, {
+    id: result.id,
+    status: result.status,
+    cancelledAt: result.cancelledAt,
+    message: "导入会话已取消"
   });
 }

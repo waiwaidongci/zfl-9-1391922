@@ -23,89 +23,119 @@ function isValidTideWindow(window) {
   return new Date(window.start) < new Date(window.end);
 }
 
-function isValidImo(imo) {
-  if (imo === undefined || imo === null || imo === "") return true;
-  if (typeof imo !== "string") return false;
-  return /^IMO\d{7}$/.test(imo) || /^\d{7}$/.test(imo);
+const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function validateVesselDetail(vessel) {
+  const warnings = [];
+  if (vessel && typeof vessel === "object") {
+    if (vessel.imo !== undefined && vessel.imo !== null && vessel.imo !== "") {
+      if (typeof vessel.imo !== "string" || !/^IMO\d{7}$/.test(vessel.imo)) {
+        warnings.push({ field: "vessel.imo", message: "IMO编号格式建议为 IMO+7位数字", code: "imo_format_warning" });
+      }
+    }
+    if (vessel.length !== undefined && vessel.length !== null) {
+      if (typeof vessel.length !== "number" || vessel.length <= 0 || vessel.length > 500) {
+        warnings.push({ field: "vessel.length", message: "船舶长度应在0-500米范围内", code: "length_range_warning" });
+      }
+    }
+  }
+  return warnings;
 }
 
-function isValidLength(length) {
-  if (length === undefined || length === null || length === "") return true;
-  if (typeof length !== "number") return false;
-  return length > 0 && length < 1000;
+function validateTideWindowDetail(window) {
+  const warnings = [];
+  if (window && typeof window === "object" && isValidDateString(window.start) && isValidDateString(window.end)) {
+    const start = new Date(window.start);
+    const end = new Date(window.end);
+    const durationMs = end - start;
+    const durationHours = durationMs / (1000 * 60 * 60);
+    if (durationHours < 0.5) {
+      warnings.push({ field: "tideWindow", message: "潮汐窗口时长不足30分钟", code: "short_window_warning" });
+    }
+    if (durationHours > 24) {
+      warnings.push({ field: "tideWindow", message: "潮汐窗口时长超过24小时", code: "long_window_warning" });
+    }
+    const now = new Date();
+    const daysAhead = (start - now) / (1000 * 60 * 60 * 24);
+    if (daysAhead > 30) {
+      warnings.push({ field: "tideWindow.start", message: "潮汐窗口起始时间距当前超过30天", code: "far_future_warning" });
+    }
+  }
+  return warnings;
 }
 
 export function validateTaskRow(row, index, existingTaskIds = new Set()) {
   const errors = [];
   const warnings = [];
 
-  if (!row || typeof row !== "object") {
-    errors.push({ field: "row", message: "行数据格式错误，应为对象" });
-    return { valid: false, errors, warnings, row: null, rowIndex: index };
+  if (!row || typeof row !== "object" || Array.isArray(row)) {
+    errors.push({ field: "row", message: "行数据格式错误，应为对象", code: "invalid_row_format" });
+    return { valid: false, errors, warnings, rowIndex: index };
   }
 
   if (row.id !== undefined && row.id !== null) {
-    if (!isNonEmptyString(row.id)) {
-      errors.push({ field: "id", message: "任务ID必须为非空字符串" });
+    if (typeof row.id !== "string") {
+      errors.push({ field: "id", message: `任务ID必须为字符串，实际为 ${typeof row.id}`, code: "id_not_string" });
+    } else if (row.id.trim() === "") {
+      errors.push({ field: "id", message: "任务ID不能为空白字符串", code: "empty_id" });
+    } else if (!ID_PATTERN.test(row.id)) {
+      errors.push({ field: "id", message: `任务ID格式无效: ${row.id}，仅允许字母、数字、下划线和连字符`, code: "invalid_id_format" });
+    } else if (row.id.length > 64) {
+      errors.push({ field: "id", message: "任务ID长度不能超过64个字符", code: "id_too_long" });
     } else if (existingTaskIds.has(row.id)) {
-      warnings.push({
-        field: "id",
-        message: `任务ID ${row.id} 已存在，提交时将被跳过（如需更新请设置 updateMode=true）`,
-        code: "duplicate_existing_id"
-      });
+      warnings.push({ field: "id", message: `任务ID ${row.id} 已存在，确认提交时将更新已有任务`, code: "duplicate_id" });
     }
   }
 
-  if (!isValidVessel(row.vessel)) {
-    errors.push({ field: "vessel", message: "船舶信息不完整或船型无效，需提供 name 和有效的 type" });
+  if (!row.vessel || typeof row.vessel !== "object" || Array.isArray(row.vessel)) {
+    errors.push({ field: "vessel", message: "船舶信息缺失", code: "missing_vessel" });
   } else {
-    if (row.vessel.imo !== undefined && !isValidImo(row.vessel.imo)) {
-      warnings.push({ field: "vessel.imo", message: "IMO号格式不规范，应为 IMO+7位数字 或 7位数字" });
+    if (!isNonEmptyString(row.vessel.name)) {
+      errors.push({ field: "vessel.name", message: "船名不能为空", code: "missing_vessel_name" });
     }
-    if (row.vessel.length !== undefined && !isValidLength(row.vessel.length)) {
-      warnings.push({ field: "vessel.length", message: "船舶长度格式不规范，应为大于0小于1000的数字" });
+    if (!isNonEmptyString(row.vessel.type)) {
+      errors.push({ field: "vessel.type", message: "船型不能为空", code: "missing_vessel_type" });
+    } else if (!isValidShipType(row.vessel.type)) {
+      errors.push({ field: "vessel.type", message: `无效的船型: ${row.vessel.type}`, code: "invalid_vessel_type" });
     }
+    warnings.push(...validateVesselDetail(row.vessel));
   }
 
   if (!isNonEmptyString(row.district)) {
-    errors.push({ field: "district", message: "港区不能为空" });
+    errors.push({ field: "district", message: "港区不能为空", code: "missing_district" });
   } else if (!isValidDistrict(row.district)) {
-    errors.push({ field: "district", message: `无效的港区: ${row.district}` });
+    errors.push({ field: "district", message: `无效的港区: ${row.district}`, code: "invalid_district" });
   }
 
-  if (!isValidTideWindow(row.tideWindow)) {
-    errors.push({ field: "tideWindow", message: "潮汐窗口无效或缺失，需包含有效的 start 和 end 时间，且 start 必须早于 end" });
+  if (!row.tideWindow || typeof row.tideWindow !== "object" || Array.isArray(row.tideWindow)) {
+    errors.push({ field: "tideWindow", message: "潮汐窗口缺失", code: "missing_tide_window" });
   } else {
-    const windowStart = new Date(row.tideWindow.start);
-    const now = new Date();
-    if (windowStart < now) {
-      const daysDiff = (now - windowStart) / (1000 * 60 * 60 * 24);
-      if (daysDiff > 7) {
-        warnings.push({ field: "tideWindow", message: "潮汐窗口起始时间已超过7天前，请确认数据准确性" });
+    if (!isValidDateString(row.tideWindow.start)) {
+      errors.push({ field: "tideWindow.start", message: "潮汐窗口起始时间无效", code: "invalid_window_start" });
+    }
+    if (!isValidDateString(row.tideWindow.end)) {
+      errors.push({ field: "tideWindow.end", message: "潮汐窗口结束时间无效", code: "invalid_window_end" });
+    }
+    if (isValidDateString(row.tideWindow.start) && isValidDateString(row.tideWindow.end)) {
+      if (new Date(row.tideWindow.start) >= new Date(row.tideWindow.end)) {
+        errors.push({ field: "tideWindow", message: "潮汐窗口结束时间必须晚于起始时间", code: "window_end_before_start" });
       }
     }
-    const windowDuration = new Date(row.tideWindow.end) - windowStart;
-    const hours = windowDuration / (1000 * 60 * 60);
-    if (hours > 48) {
-      warnings.push({ field: "tideWindow", message: `潮汐窗口时长过长（${hours.toFixed(1)}小时），请确认数据准确性` });
-    }
-    if (hours < 0.5) {
-      warnings.push({ field: "tideWindow", message: `潮汐窗口时长过短（${(hours * 60).toFixed(0)}分钟），请确认数据准确性` });
-    }
+    warnings.push(...validateTideWindowDetail(row.tideWindow));
   }
 
   if (!isNonEmptyString(row.requiredGrade)) {
-    errors.push({ field: "requiredGrade", message: "资质等级不能为空" });
+    errors.push({ field: "requiredGrade", message: "资质等级不能为空", code: "missing_grade" });
   } else if (!isValidGrade(row.requiredGrade)) {
-    errors.push({ field: "requiredGrade", message: `无效的资质等级: ${row.requiredGrade}` });
+    errors.push({ field: "requiredGrade", message: `无效的资质等级: ${row.requiredGrade}`, code: "invalid_grade" });
   }
 
   if (row.berthPlan !== undefined && row.berthPlan !== null && typeof row.berthPlan !== "string") {
-    errors.push({ field: "berthPlan", message: "泊位计划应为字符串" });
+    errors.push({ field: "berthPlan", message: `泊位计划应为字符串，实际为 ${typeof row.berthPlan}`, code: "invalid_berth_plan" });
   }
 
   if (row.note !== undefined && row.note !== null && typeof row.note !== "string") {
-    warnings.push({ field: "note", message: "备注应为字符串类型" });
+    errors.push({ field: "note", message: `备注应为字符串，实际为 ${typeof row.note}`, code: "invalid_note" });
   }
 
   return {
@@ -118,64 +148,65 @@ export function validateTaskRow(row, index, existingTaskIds = new Set()) {
 
 export function validateTaskBatch(rows, existingTaskIds = new Set()) {
   if (!Array.isArray(rows)) {
-    return { valid: false, error: "输入必须为数组" };
+    return { valid: false, error: "输入必须为数组", code: "not_array" };
   }
 
   if (rows.length === 0) {
-    return { valid: false, error: "导入数据不能为空" };
+    return { valid: false, error: "导入数据不能为空", code: "empty_batch" };
+  }
+
+  if (rows.length > 200) {
+    return { valid: false, error: "单次导入行数不能超过200条", code: "batch_too_large" };
   }
 
   const results = rows.map((row, index) => validateTaskRow(row, index, existingTaskIds));
   const validRows = results.filter((r) => r.valid).map((r) => r.rowIndex);
   const errorRows = results.filter((r) => !r.valid).map((r) => r.rowIndex);
 
-  const duplicateExistingIds = [];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (row && row.id && existingTaskIds.has(row.id)) {
-      duplicateExistingIds.push({ rowIndex: i, id: row.id });
-    }
-  }
-
-  const idSet = new Map();
-  const batchDuplicateIds = [];
+  const idSet = new Set();
+  const duplicateIdsWithinBatch = [];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (row && row.id) {
       if (idSet.has(row.id)) {
-        const firstIndex = idSet.get(row.id);
-        batchDuplicateIds.push({ rowIndex: i, id: row.id, firstOccurrence: firstIndex });
+        duplicateIdsWithinBatch.push({ rowIndex: i, id: row.id });
         if (results[i].valid) {
           results[i].valid = false;
-          results[i].errors.push({
-            field: "id",
-            message: `批次内重复ID: ${row.id}（首次出现在第 ${firstIndex} 行）`,
-            code: "batch_duplicate_id"
-          });
+          results[i].errors.push({ field: "id", message: `批次内重复ID: ${row.id}`, code: "batch_duplicate_id" });
         }
       } else {
-        idSet.set(row.id, i);
+        idSet.add(row.id);
       }
     }
   }
 
-  const updatedValidRows = results.filter((r) => r.valid).map((r) => r.rowIndex);
+  const allWarnings = results.flatMap((r) => r.warnings.map((w) => ({ ...w, rowIndex: r.rowIndex })));
 
   return {
     totalCount: rows.length,
-    validCount: updatedValidRows.length,
+    validCount: results.filter((r) => r.valid).length,
     errorCount: results.filter((r) => !r.valid).length,
-    validRows: updatedValidRows,
+    warningCount: allWarnings.length,
+    validRows,
     errorRows,
     rowResults: results,
-    duplicateExistingIds,
-    batchDuplicateIds
+    duplicateIdsWithinBatch,
+    allWarnings
   };
 }
 
+let _idCounter = 0;
+
 export function buildTaskFromRow(row, defaultIdPrefix = "T") {
+  let id;
+  if (row.id) {
+    id = row.id;
+  } else {
+    _idCounter++;
+    id = `${defaultIdPrefix}-${Date.now()}-${_idCounter.toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  }
   return {
-    id: row.id || `${defaultIdPrefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+    id,
     vessel: {
       name: row.vessel?.name || "",
       imo: row.vessel?.imo || "",
