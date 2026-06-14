@@ -182,7 +182,6 @@ async function runTests() {
       ]
     });
 
-    const noTempAssigned = resultNoTemp.assignments.find((a) => a.taskId === "SIM-IMPOSSIBLE");
     const withTempAssigned = resultWithTemp.assignments.find((a) => a.taskId === "SIM-IMPOSSIBLE");
     assert(withTempAssigned !== undefined, "添加临时引航员后任务可被分配");
     assert(withTempAssigned.pilotId === "P-TEMP-CHEM", "任务分配给临时引航员");
@@ -237,6 +236,156 @@ async function runTests() {
     if (result.assignments.length === 2) {
       assert(true, `2个任务分配给${assignedPilotIds.size}名引航员`);
     }
+  }
+
+  console.log("\n--- 9. 等级匹配与真实assign一致性测试 ---");
+  {
+    const snapshot = createSimulationSnapshot(db);
+    const pilotWithA = snapshot.pilots.find((p) => p.id === "P-03");
+    const taskB = {
+      id: "GRADE-CONSISTENCY-01",
+      vessel: { name: "等级一致性船", type: "散货船", length: 180 },
+      district: "东港",
+      tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" },
+      requiredGrade: "B"
+    };
+
+    const simResult = evaluateSimCandidate(snapshot, pilotWithA, taskB);
+    assert(!simResult.eligible, `P-03(grades=["A"])对requiredGrade=B任务应不满足(sim)，eligible=${simResult.eligible}`);
+    assert(simResult.disqualifying.includes("grade_mismatch"), `disqualifying包含grade_mismatch，实际=${simResult.disqualifying}`);
+
+    const taskA = {
+      id: "GRADE-CONSISTENCY-02",
+      vessel: { name: "等级一致性船2", type: "散货船", length: 180 },
+      district: "东港",
+      tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" },
+      requiredGrade: "A"
+    };
+    const simResult2 = evaluateSimCandidate(snapshot, pilotWithA, taskA);
+    assert(simResult2.eligible, `P-03(grades=["A"])对requiredGrade=A任务应满足(sim)，eligible=${simResult2.eligible}`);
+
+    const pilotWithAB = snapshot.pilots.find((p) => p.id === "P-01");
+    const simResult3 = evaluateSimCandidate(snapshot, pilotWithAB, taskB);
+    assert(simResult3.eligible, `P-01(grades=["A","B"])对requiredGrade=B任务应满足(sim)，eligible=${simResult3.eligible}`);
+  }
+
+  console.log("\n--- 10. disqualifying名称与真实assign一致测试 ---");
+  {
+    const snapshot = createSimulationSnapshot(db);
+    const pilot = snapshot.pilots.find((p) => p.id === "P-02");
+    const task = {
+      id: "DISQ-NAME-01",
+      vessel: { name: "名称测试船", type: "散货船", length: 180 },
+      district: "东港",
+      tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" },
+      requiredGrade: "A"
+    };
+
+    const simResult = evaluateSimCandidate(snapshot, pilot, task);
+    assert(simResult.disqualifying.includes("district_mismatch"), `disqualifying用district_mismatch而非district_match，实际=${simResult.disqualifying}`);
+    assert(simResult.disqualifying.includes("ship_type_mismatch"), `disqualifying用ship_type_mismatch而非ship_type_match，实际=${simResult.disqualifying}`);
+    assert(!simResult.disqualifying.includes("district_match"), "disqualifying不含规则键名district_match");
+    assert(!simResult.disqualifying.includes("ship_type_match"), "disqualifying不含规则键名ship_type_match");
+  }
+
+  console.log("\n--- 11. 任务ID校验测试 ---");
+  {
+    const { handleSimulationDispatch } = await import("../routes/simulation.js");
+
+    let capturedStatus;
+    let capturedData;
+    const mockSend = (res, status, data) => {
+      capturedStatus = status;
+      capturedData = data;
+    };
+    const mockRes = {};
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        { id: "T-260614-01", vessel: { name: "冲突ID", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `与已有真实任务ID冲突应返回400，实际=${capturedStatus}`);
+    assert(capturedData.error === "validation_failed", "错误类型为validation_failed");
+    assert(capturedData.errors.some((e) => e.code === "existing_id_conflict"), "包含existing_id_conflict错误");
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        { id: "DUP-01", vessel: { name: "重复1", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" },
+        { id: "DUP-01", vessel: { name: "重复2", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T14:00:00.000Z", end: "2026-06-14T17:00:00.000Z" }, requiredGrade: "B" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `批次内重复ID应返回400，实际=${capturedStatus}`);
+    assert(capturedData.errors.some((e) => e.code === "batch_duplicate_id"), "包含batch_duplicate_id错误");
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        { id: "bad id!", vessel: { name: "非法ID", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `非法ID格式应返回400，实际=${capturedStatus}`);
+    assert(capturedData.errors.some((e) => e.code === "invalid_id_format"), "包含invalid_id_format错误");
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        { id: "", vessel: { name: "空ID", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `空白ID应返回400，实际=${capturedStatus}`);
+    assert(capturedData.errors.some((e) => e.code === "empty_id"), "包含empty_id错误");
+  }
+
+  console.log("\n--- 12. 枚举字段校验测试 ---");
+  {
+    const { handleSimulationDispatch } = await import("../routes/simulation.js");
+
+    let capturedStatus;
+    let capturedData;
+    const mockSend = (res, status, data) => {
+      capturedStatus = status;
+      capturedData = data;
+    };
+    const mockRes = {};
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        { id: "ENUM-01", vessel: { name: "非法港区", type: "散货船", length: 180 }, district: "南海", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `无效港区应返回400，实际=${capturedStatus}`);
+    assert(capturedData.errors.some((e) => e.code === "invalid_district"), "包含invalid_district错误");
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        { id: "ENUM-02", vessel: { name: "非法船型", type: "航母", length: 300 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `无效船型应返回400，实际=${capturedStatus}`);
+    assert(capturedData.errors.some((e) => e.code === "invalid_vessel_type"), "包含invalid_vessel_type错误");
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        { id: "ENUM-03", vessel: { name: "非法等级", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "C" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `无效等级应返回400，实际=${capturedStatus}`);
+    assert(capturedData.errors.some((e) => e.code === "invalid_grade"), "包含invalid_grade错误");
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        { id: "ENUM-04", vessel: { type: "散货船" }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `缺少船名应返回400，实际=${capturedStatus}`);
+    assert(capturedData.errors && capturedData.errors.some((e) => e.code === "missing_vessel_name"), "包含missing_vessel_name错误");
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        { id: "ENUM-05", vessel: { name: "时间反序", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T11:00:00.000Z", end: "2026-06-14T08:00:00.000Z" }, requiredGrade: "B" }
+      ]
+    }, mockSend, mockRes);
+    assert(capturedStatus === 400, `时间窗口反序应返回400，实际=${capturedStatus}`);
+    assert(capturedData.errors.some((e) => e.code === "window_end_before_start"), "包含window_end_before_start错误");
   }
 
   console.log(`\n=== 测试结果: ${passed} 通过, ${failed} 失败 ===\n`);

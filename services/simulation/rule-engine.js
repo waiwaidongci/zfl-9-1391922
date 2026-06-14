@@ -1,4 +1,4 @@
-import { RECOMMEND_WEIGHTS, gradeScore, shiftCoverageScore, workloadScore } from "../../config/recommend-rules.js";
+import { RECOMMEND_WEIGHTS, shiftCoverageScore, workloadScore } from "../../config/recommend-rules.js";
 import { overlaps, intersectInterval } from "../../utils/time.js";
 import { isActiveTaskStatus } from "../../config/scheduling-rules.js";
 
@@ -11,7 +11,7 @@ function bestGrade(pilotGrades) {
   return pilotGrades.reduce((best, g) => (rank[g] ?? 0) > (rank[best] ?? 0) ? g : best, null);
 }
 
-export function evaluateSimCandidate(snapshot, pilot, task, simAssignedTaskIds = new Set()) {
+export function evaluateSimCandidate(snapshot, pilot, task) {
   const window = { start: task.tideWindow.start, end: task.tideWindow.end };
   const taskMinutes = minutesBetween(window.start, window.end);
   const rules = [];
@@ -47,14 +47,13 @@ export function evaluateSimCandidate(snapshot, pilot, task, simAssignedTaskIds =
     detail: { pilotShipTypes: pilot.shipTypes, taskShipType: task.vessel.type }
   });
 
-  const pilotBestGrade = bestGrade(pilot.grades);
-  const gradeOk = gradeScore(pilotBestGrade, task.requiredGrade) > 0;
+  const gradeOk = pilot.grades.includes(task.requiredGrade);
   rules.push({
     rule: "grade_match",
     passed: gradeOk,
     score: gradeOk ? 1 : 0,
     weight: RECOMMEND_WEIGHTS.grade,
-    detail: { pilotGrades: pilot.grades, pilotBestGrade, requiredGrade: task.requiredGrade }
+    detail: { pilotGrades: pilot.grades, requiredGrade: task.requiredGrade }
   });
 
   const simActiveTasks = snapshot.tasks.filter(
@@ -94,6 +93,14 @@ export function evaluateSimCandidate(snapshot, pilot, task, simAssignedTaskIds =
   });
 
   const hardRules = ["shift_coverage", "district_match", "ship_type_match", "grade_match", "no_time_conflict", "no_leave_conflict"];
+  const disqualifyMap = {
+    shift_coverage: "not_on_shift",
+    district_match: "district_mismatch",
+    ship_type_match: "ship_type_mismatch",
+    grade_match: "grade_mismatch",
+    no_time_conflict: "time_conflict",
+    no_leave_conflict: "leave_conflict"
+  };
   const eligible = rules.filter((r) => hardRules.includes(r.rule)).every((r) => r.passed);
 
   let totalScore = 0;
@@ -111,12 +118,12 @@ export function evaluateSimCandidate(snapshot, pilot, task, simAssignedTaskIds =
     totalScore: Number(totalScore.toFixed(2)),
     rules,
     weightedScores,
-    disqualifying: rules.filter((r) => hardRules.includes(r.rule) && !r.passed).map((r) => r.rule)
+    disqualifying: rules.filter((r) => hardRules.includes(r.rule) && !r.passed).map((r) => disqualifyMap[r.rule])
   };
 }
 
-export function rankCandidates(snapshot, task, simAssignedTaskIds) {
-  const candidates = snapshot.pilots.map((pilot) => evaluateSimCandidate(snapshot, pilot, task, simAssignedTaskIds));
+export function rankCandidates(snapshot, task) {
+  const candidates = snapshot.pilots.map((pilot) => evaluateSimCandidate(snapshot, pilot, task));
   candidates.sort((a, b) => {
     if (b.eligible !== a.eligible) return b.eligible ? 1 : -1;
     if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;

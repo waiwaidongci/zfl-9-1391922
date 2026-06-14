@@ -57,7 +57,7 @@ export function runSimulation(db, { tasks = [], tempShifts = [] } = {}) {
   const sortedTasks = sortTasksByPriority(simTasks);
 
   for (const task of sortedTasks) {
-    const candidates = rankCandidates(snapshot, task, simAssignedTaskIds);
+    const candidates = rankCandidates(snapshot, task);
     const eligible = candidates.filter((c) => c.eligible);
 
     if (eligible.length === 0) {

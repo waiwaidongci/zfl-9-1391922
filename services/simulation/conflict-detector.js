@@ -28,10 +28,7 @@ export function detectConflictsForTask(snapshot, task) {
     });
   }
 
-  const gradePilots = snapshot.pilots.filter((p) => {
-    const rank = { A: 2, B: 1 };
-    return p.grades.some((g) => (rank[g] ?? 0) >= (rank[task.requiredGrade] ?? 99));
-  });
+  const gradePilots = snapshot.pilots.filter((p) => p.grades.includes(task.requiredGrade));
   if (gradePilots.length === 0) {
     conflicts.push({
       type: "no_pilot_for_grade",
@@ -85,8 +82,7 @@ export function detectConflictsForPilot(snapshot, pilot, task) {
     conflicts.push({ type: "ship_type_mismatch", message: `引航员不具备 ${task.vessel.type} 船型资质` });
   }
 
-  const rank = { A: 2, B: 1 };
-  const gradeOk = pilot.grades.some((g) => (rank[g] ?? 0) >= (rank[task.requiredGrade] ?? 99));
+  const gradeOk = pilot.grades.includes(task.requiredGrade);
   if (!gradeOk) {
     conflicts.push({ type: "grade_mismatch", message: `引航员等级不满足 ${task.requiredGrade} 要求` });
   }
