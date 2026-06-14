@@ -14,7 +14,7 @@ function isValidDateString(value) {
 
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-function validateSimTask(task, index, existingTaskIds, batchDupIndices) {
+function validateSimTask(task, index, batchDupIndices) {
   const errors = [];
 
   if (!task || typeof task !== "object" || Array.isArray(task)) {
@@ -31,8 +31,6 @@ function validateSimTask(task, index, existingTaskIds, batchDupIndices) {
     errors.push({ field: "id", message: `任务索引 ${index}: 任务ID格式无效: ${task.id}，仅允许字母、数字、下划线和连字符`, code: "invalid_id_format" });
   } else if (task.id.length > 64) {
     errors.push({ field: "id", message: `任务索引 ${index}: 任务ID长度不能超过64个字符`, code: "id_too_long" });
-  } else if (existingTaskIds.has(task.id)) {
-    errors.push({ field: "id", message: `任务索引 ${index}: 任务ID ${task.id} 与已有真实任务ID冲突`, code: "existing_id_conflict" });
   }
 
   if (!task.tideWindow || typeof task.tideWindow !== "object" || Array.isArray(task.tideWindow)) {
@@ -94,7 +92,6 @@ export function handleSimulationDispatch(db, input, send, res) {
 
   const tempShifts = Array.isArray(input.tempShifts) ? input.tempShifts : [];
 
-  const existingTaskIds = new Set(db.tasks.map((t) => t.id));
   const batchIdSet = new Set();
   const batchDupIndices = new Set();
 
@@ -121,7 +118,7 @@ export function handleSimulationDispatch(db, input, send, res) {
         code: "batch_duplicate_id"
       });
     }
-    const result = validateSimTask(task, i, existingTaskIds, batchDupIndices);
+    const result = validateSimTask(task, i, batchDupIndices);
     if (!result.valid) {
       validationErrors.push(...result.errors);
     }

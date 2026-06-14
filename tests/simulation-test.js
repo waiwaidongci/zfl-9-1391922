@@ -302,12 +302,12 @@ async function runTests() {
 
     await handleSimulationDispatch(db, {
       tasks: [
-        { id: "T-260614-01", vessel: { name: "冲突ID", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" }
+        { id: "T-260614-01", vessel: { name: "真实ID", type: "散货船", length: 180 }, district: "东港", tideWindow: { start: "2026-06-14T08:00:00.000Z", end: "2026-06-14T11:00:00.000Z" }, requiredGrade: "B" }
       ]
     }, mockSend, mockRes);
-    assert(capturedStatus === 400, `与已有真实任务ID冲突应返回400，实际=${capturedStatus}`);
-    assert(capturedData.error === "validation_failed", "错误类型为validation_failed");
-    assert(capturedData.errors.some((e) => e.code === "existing_id_conflict"), "包含existing_id_conflict错误");
+    assert(capturedStatus === 200, `使用已有真实任务ID参与仿真应返回200，实际=${capturedStatus}`);
+    assert(capturedData.assignmentLog !== undefined, "使用真实任务ID仿真正常返回assignmentLog");
+    assert(capturedData.assignmentLog.some((l) => l.taskId === "T-260614-01"), "assignmentLog包含真实任务ID");
 
     await handleSimulationDispatch(db, {
       tasks: [

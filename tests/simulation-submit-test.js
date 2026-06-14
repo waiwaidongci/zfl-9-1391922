@@ -357,6 +357,143 @@ async function runTests() {
     assert(capturedData.summary.succeeded === 1 && capturedData.summary.failed === 1, "1成功1失败");
   }
 
+  console.log("\n--- 16. 端到端主链路：dispatch → assignmentLog → submit ---");
+  {
+    const { handleSimulationDispatch, handleSimulationSubmit } = await import("../routes/simulation.js");
+    const db = deepClone(originalDb);
+
+    let capturedStatus;
+    let capturedData;
+    const mockSend = (res, status, data) => {
+      capturedStatus = status;
+      capturedData = data;
+    };
+    const mockRes = {};
+
+    const task02Before = deepClone(db.tasks.find((t) => t.id === "T-260614-02"));
+    assert(task02Before.status === "pending" && task02Before.pilotId === null, "T-260614-02 提交前为 pending 无引航员");
+
+    await handleSimulationDispatch(db, {
+      tasks: [
+        {
+          id: "T-260614-02",
+          vessel: { name: "海盛号", type: "集装箱船", length: 260 },
+          district: "北槽",
+          tideWindow: { start: "2026-06-14T10:00:00.000Z", end: "2026-06-14T13:00:00.000Z" },
+          requiredGrade: "A"
+        }
+      ]
+    }, mockSend, mockRes);
+
+    assert(capturedStatus === 200, `仿真dispatch返回200，实际=${capturedStatus}`);
+    assert(capturedData.assignmentLog && capturedData.assignmentLog.length > 0, "仿真返回了assignmentLog");
+    assert(capturedData.assignmentLog[0].taskId === "T-260614-02", "assignmentLog中taskId为真实任务ID");
+
+    const assignmentLog = capturedData.assignmentLog;
+
+    await handleSimulationSubmit(db, {
+      assignmentLog,
+      operator: "端到端测试",
+      note: "仿真结果直接提交"
+    }, mockSend, mockRes);
+
+    assert(capturedStatus === 200, `仿真submit返回200，实际=${capturedStatus}`);
+    assert(capturedData.success === true, "提交成功");
+    assert(capturedData.summary.succeeded >= 1, `至少1条成功，实际=${capturedData.summary.succeeded}`);
+
+    const task02After = db.tasks.find((t) => t.id === "T-260614-02");
+    assert(task02After.pilotId !== null, "真实任务 pilotId 已被更新");
+    assert(task02After.status === ASSIGNED_TASK_STATUS, `真实任务 status 更新为 ${ASSIGNED_TASK_STATUS}`);
+
+    const t02Audits = (await loadAuditLog()).events.filter(
+      (e) => e.objectId === "T-260614-02" && e.action === "assign"
+    );
+    assert(t02Audits.length >= 1, "审计日志中有T-260614-02的assign事件");
+    const latestAudit = t02Audits[t02Audits.length - 1];
+    assert(latestAudit.operator === "端到端测试", "最新审计记录了操作人");
+
+    const dbCheck = await loadDb();
+    const task02InDb = dbCheck.tasks.find((t) => t.id === "T-260614-02");
+    assert(task02InDb.pilotId === task02After.pilotId, "持久化数据与内存一致");
+  }
+
+  console.log("\n--- 17. 端到端主链路：真实任务ID在仿真中替换快照 ---");
+  {
+    const { runSimulation } = await import("../services/simulation/index.js");
+    const db = deepClone(originalDb);
+
+    const taskCountBefore = db.tasks.length;
+    const result = runSimulation(db, {
+      tasks: [
+        {
+          id: "T-260614-02",
+          vessel: { name: "海盛号(仿真)", type: "集装箱船", length: 260 },
+          district: "北槽",
+          tideWindow: { start: "2026-06-14T10:00:00.000Z", end: "2026-06-14T13:00:00.000Z" },
+          requiredGrade: "A"
+        }
+      ]
+    });
+
+    assert(db.tasks.length === taskCountBefore, "仿真后真实DB任务数不变");
+    assert(result.assignmentLog.some((l) => l.taskId === "T-260614-02"), "assignmentLog包含真实任务ID");
+
+    const submitResult = await submitSimulationAssignments(db, {
+      assignmentLog: result.assignmentLog,
+      operator: "链路测试"
+    });
+    assert(submitResult.success === true, "使用仿真assignmentLog直接提交成功");
+    assert(submitResult.succeeded.some((s) => s.taskId === "T-260614-02"), "真实任务ID在succeeded中");
+
+    const task02 = db.tasks.find((t) => t.id === "T-260614-02");
+    assert(task02.status === ASSIGNED_TASK_STATUS, "真实任务状态已更新");
+  }
+
+  console.log("\n--- 18. 端到端主链路：多条真实任务仿真+提交 ---");
+  {
+    const { runSimulation } = await import("../services/simulation/index.js");
+    const db = deepClone(originalDb);
+    db.pilots.find((p) => p.id === "P-02").shifts.push({
+      start: "2026-06-15T04:00:00.000Z",
+      end: "2026-06-15T12:00:00.000Z"
+    });
+
+    const result = runSimulation(db, {
+      tasks: [
+        {
+          id: "T-260614-02",
+          vessel: { name: "海盛号", type: "集装箱船", length: 260 },
+          district: "北槽",
+          tideWindow: { start: "2026-06-14T10:00:00.000Z", end: "2026-06-14T13:00:00.000Z" },
+          requiredGrade: "A"
+        },
+        {
+          id: "T-260614-03",
+          vessel: { name: "远泰9", type: "油轮", length: 220 },
+          district: "西港",
+          tideWindow: { start: "2026-06-15T06:00:00.000Z", end: "2026-06-15T09:00:00.000Z" },
+          requiredGrade: "A"
+        }
+      ]
+    });
+
+    assert(result.assignmentLog.length >= 1, `仿真至少产出1条assignmentLog，实际=${result.assignmentLog.length}`);
+
+    const submitResult = await submitSimulationAssignments(db, {
+      assignmentLog: result.assignmentLog,
+      operator: "批量链路测试"
+    });
+
+    assert(submitResult.summary.succeeded >= 1, `至少1条提交成功，实际=${submitResult.summary.succeeded}`);
+
+    const assignedTaskIds = submitResult.succeeded.map((s) => s.taskId);
+    for (const tid of assignedTaskIds) {
+      const task = db.tasks.find((t) => t.id === tid);
+      assert(task.status === ASSIGNED_TASK_STATUS, `任务 ${tid} 状态已更新为 assigned`);
+      assert(task.pilotId !== null, `任务 ${tid} 已分配引航员`);
+    }
+  }
+
   await resetDb(originalDb, originalAudit);
 
   console.log(`\n=== 测试结果: ${passed} 通过, ${failed} 失败 ===\n`);

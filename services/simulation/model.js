@@ -64,14 +64,20 @@ function mergeTempShifts(snapshot, tempShifts) {
 }
 
 export function addSimTask(snapshot, task) {
-  snapshot.tasks.push({
+  const existingIdx = snapshot.tasks.findIndex((t) => t.id === task.id);
+  const entry = {
     ...task,
     vessel: { ...task.vessel },
     tideWindow: task.tideWindow ? { ...task.tideWindow } : null,
     status: task.status || "pending",
     pilotId: task.pilotId || null,
     history: task.history ? task.history.map((h) => ({ ...h })) : []
-  });
+  };
+  if (existingIdx >= 0) {
+    snapshot.tasks[existingIdx] = entry;
+  } else {
+    snapshot.tasks.push(entry);
+  }
 }
 
 export function assignSimTask(snapshot, taskId, pilotId) {
