@@ -120,8 +120,8 @@
       "district": "东港",
       "berthPlan": "靠泊D3",
       "tideWindow": {
-        "start": "2026-06-14T02:30:00.000Z",
-        "end": "2026-06-14T05:30:00.000Z"
+        "start": "2026-06-14T04:00:00.000Z",
+        "end": "2026-06-14T07:00:00.000Z"
       },
       "requiredGrade": "B",
       "status": "assigned",
@@ -131,6 +131,16 @@
           "at": "2026-06-13T16:00:00.000Z",
           "action": "created",
           "note": "初始申请"
+        },
+        {
+          "at": "2026-06-14T00:24:19.862Z",
+          "action": "change_approved",
+          "note": "变更审批通过[CR-1781396597278]：潮汐窗口 2026-06-14T02:30:00.000Z~2026-06-14T05:30:00.000Z -> 2026-06-14T04:00:00.000Z~2026-06-14T07:00:00.000Z"
+        },
+        {
+          "at": "2026-06-14T00:24:27.425Z",
+          "action": "change_rejected",
+          "note": "变更申请驳回[CR-1781396650173]：泊位D5有危险品作业，禁止散货船靠泊"
         }
       ]
     },
@@ -143,7 +153,7 @@
         "length": 260
       },
       "district": "北槽",
-      "berthPlan": "靠泊N2",
+      "berthPlan": "靠泊N5",
       "tideWindow": {
         "start": "2026-06-14T10:00:00.000Z",
         "end": "2026-06-14T13:00:00.000Z"
@@ -156,6 +166,11 @@
           "at": "2026-06-13T20:00:00.000Z",
           "action": "created",
           "note": "北槽集装箱船任务"
+        },
+        {
+          "at": "2026-06-14T00:24:37.607Z",
+          "action": "updated",
+          "note": "调整泊位"
         }
       ]
     },
@@ -185,17 +200,82 @@
       ]
     }
   ],
-  "drafts": [
+  "drafts": [],
+  "changeRequests": [
     {
-      "id": "D-1781389686447",
-      "vessel": null,
-      "district": "东港",
-      "berthPlan": null,
-      "tideWindow": null,
-      "requiredGrade": null,
-      "note": "待补充船舶信息",
-      "createdAt": "2026-06-13T22:28:06.447Z",
-      "updatedAt": "2026-06-13T22:28:06.447Z"
+      "id": "CR-1781396597278",
+      "taskId": "T-260614-01",
+      "type": "tide_window",
+      "original": {
+        "status": "assigned",
+        "tideWindow": {
+          "start": "2026-06-14T02:30:00.000Z",
+          "end": "2026-06-14T05:30:00.000Z"
+        },
+        "berthPlan": "靠泊D3",
+        "pilotId": "P-01"
+      },
+      "proposed": {
+        "tideWindow": {
+          "start": "2026-06-14T04:00:00.000Z",
+          "end": "2026-06-14T07:00:00.000Z"
+        }
+      },
+      "status": "approved",
+      "reason": null,
+      "applicant": "调度员小王",
+      "approver": "值班主任老李",
+      "note": "船期延误",
+      "conflictCheck": {
+        "ok": false,
+        "conflicts": [
+          {
+            "type": "pending_request_conflict",
+            "conflictingChangeRequestIds": [
+              "CR-1781396650173"
+            ],
+            "detail": "存在待审批的同任务变更申请：CR-1781396650173"
+          }
+        ]
+      },
+      "createdAt": "2026-06-14T00:23:17.278Z",
+      "reviewedAt": "2026-06-14T00:24:19.862Z"
+    },
+    {
+      "id": "CR-1781396650173",
+      "taskId": "T-260614-01",
+      "type": "berth_plan",
+      "original": {
+        "status": "assigned",
+        "tideWindow": {
+          "start": "2026-06-14T02:30:00.000Z",
+          "end": "2026-06-14T05:30:00.000Z"
+        },
+        "berthPlan": "靠泊D3",
+        "pilotId": "P-01"
+      },
+      "proposed": {
+        "berthPlan": "靠泊D5"
+      },
+      "status": "rejected",
+      "reason": "泊位D5有危险品作业，禁止散货船靠泊",
+      "applicant": null,
+      "approver": "值班主任老李",
+      "note": "临时换泊位",
+      "conflictCheck": {
+        "ok": false,
+        "conflicts": [
+          {
+            "type": "pending_request_conflict",
+            "conflictingChangeRequestIds": [
+              "CR-1781396597278"
+            ],
+            "detail": "存在待审批的同任务变更申请：CR-1781396597278"
+          }
+        ]
+      },
+      "createdAt": "2026-06-14T00:24:10.173Z",
+      "reviewedAt": "2026-06-14T00:24:27.425Z"
     }
   ]
 }

@@ -49,7 +49,8 @@ const seed = {
       history: [{ at: "2026-06-13T22:29:06.400Z", action: "created", note: "西港油轮任务" }]
     }
   ],
-  drafts: []
+  drafts: [],
+  changeRequests: []
 };
 
 export async function loadDb() {
@@ -59,6 +60,7 @@ export async function loadDb() {
   }
   const db = JSON.parse(await readFile(dbPath, "utf8"));
   if (!db.drafts) db.drafts = [];
+  if (!db.changeRequests) db.changeRequests = [];
   return db;
 }
 

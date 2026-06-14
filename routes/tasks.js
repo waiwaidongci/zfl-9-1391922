@@ -1,6 +1,7 @@
 import { saveDb } from "../utils/db.js";
 import { recommendPilots, pilotFitsCheck } from "../utils/recommendation.js";
 import { DEFAULT_TASK_STATUS, ASSIGNED_TASK_STATUS } from "../config/scheduling-rules.js";
+import { handleChangeRequestCreate } from "./change-requests.js";
 
 function addHistory(task, action, note) {
   task.history.push({ at: new Date().toISOString(), action, note });
@@ -54,10 +55,15 @@ export function handleTaskAssign(db, task, input, send, res) {
 }
 
 export function handleTaskStatus(db, task, input, send, res) {
-  task.status = input.status;
+  const requiresApproval = task.status === ASSIGNED_TASK_STATUS &&
+    (input.tideWindow !== undefined || input.berthPlan !== undefined || input.status === "cancelled");
+  if (requiresApproval) {
+    return handleChangeRequestCreate(db, task.id, input, send, res);
+  }
+  if (input.status) task.status = input.status;
   if (input.tideWindow) task.tideWindow = input.tideWindow;
   if (input.berthPlan) task.berthPlan = input.berthPlan;
-  addHistory(task, input.status, input.note || "状态更新");
+  addHistory(task, input.status || "updated", input.note || "状态更新");
   return saveDb(db).then(() => send(res, 200, task));
 }
 

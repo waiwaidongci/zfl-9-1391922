@@ -12,12 +12,20 @@ export const DEFAULT_TASK_STATUS = "pending";
 
 export const ASSIGNED_TASK_STATUS = "assigned";
 
+export const CHANGE_REQUEST_STATUSES = ["pending", "approved", "rejected"];
+
+export const DEFAULT_CHANGE_REQUEST_STATUS = "pending";
+
+export const CHANGE_REQUEST_TYPES = ["tide_window", "berth_plan", "cancel", "other"];
+
 export const schedulingOptions = {
   districts: DISTRICTS,
   shipTypes: SHIP_TYPES,
   grades: GRADES,
   taskStatuses: TASK_STATUSES,
-  activeTaskStatuses: ACTIVE_TASK_STATUSES
+  activeTaskStatuses: ACTIVE_TASK_STATUSES,
+  changeRequestStatuses: CHANGE_REQUEST_STATUSES,
+  changeRequestTypes: CHANGE_REQUEST_TYPES
 };
 
 export function isValidDistrict(value) {
@@ -38,4 +46,12 @@ export function isValidTaskStatus(value) {
 
 export function isActiveTaskStatus(value) {
   return ACTIVE_TASK_STATUSES.includes(value);
+}
+
+export function isValidChangeRequestStatus(value) {
+  return CHANGE_REQUEST_STATUSES.includes(value);
+}
+
+export function isValidChangeRequestType(value) {
+  return CHANGE_REQUEST_TYPES.includes(value);
 }

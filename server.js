@@ -4,6 +4,14 @@ import { handleShiftsCalendar } from "./routes/shifts.js";
 import { handleDraftCreate, handleDraftList, handleDraftDetail, handleDraftUpdate, handleDraftSubmit } from "./routes/drafts.js";
 import { handleConfigOptions, handleConfigValidate } from "./routes/config.js";
 import { handleTaskList, handleTaskCreate, handleTaskCandidates, handleTaskAssign, handleTaskStatus, handleTaskRecommend } from "./routes/tasks.js";
+import {
+  handleChangeRequestList,
+  handleChangeRequestDetail,
+  handleChangeRequestCreate,
+  handleChangeRequestRecheck,
+  handleChangeRequestApprove,
+  handleChangeRequestReject
+} from "./routes/change-requests.js";
 
 const port = Number(process.env.PORT || 3009);
 
@@ -26,7 +34,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/") {
       return send(res, 200, {
         service: "港口引航站申请和排班API",
-        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit"]
+        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "GET /shifts/calendar", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject"]
       });
     }
 
@@ -107,6 +115,36 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "POST" && draftAction === "submit") {
         const input = await body(req);
         return handleDraftSubmit(db, draftId, input, send, res);
+      }
+    }
+
+    if (req.method === "GET" && url.pathname === "/change-requests") {
+      return handleChangeRequestList(db, url.searchParams, send, res);
+    }
+
+    const taskCrMatch = url.pathname.match(/^\/tasks\/([^/]+)\/change-requests$/);
+    if (taskCrMatch) {
+      const [, taskId] = taskCrMatch;
+      if (req.method === "POST") {
+        const input = await body(req);
+        return handleChangeRequestCreate(db, taskId, input, send, res);
+      }
+    }
+
+    const crMatch = url.pathname.match(/^\/change-requests\/([^/]+)(?:\/([^/]+))?$/);
+    if (crMatch) {
+      const [, crId, crAction] = crMatch;
+      if (req.method === "GET" && !crAction) return handleChangeRequestDetail(db, crId, send, res);
+      if (req.method === "POST" && crAction === "recheck") {
+        return handleChangeRequestRecheck(db, crId, send, res);
+      }
+      if (req.method === "POST" && crAction === "approve") {
+        const input = await body(req);
+        return handleChangeRequestApprove(db, crId, input, send, res);
+      }
+      if (req.method === "POST" && crAction === "reject") {
+        const input = await body(req);
+        return handleChangeRequestReject(db, crId, input, send, res);
       }
     }
 
