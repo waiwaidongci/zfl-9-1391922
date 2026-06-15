@@ -10,7 +10,9 @@ import {
   rollbackTaskAssign,
   rollbackTaskStatus,
   previewTaskRollback,
+  validatePreviewToken,
   getRollbackableActionTypes,
+  getPreviewTokenConfig,
   CONFLICT_TYPES,
   CONFLICT_SEVERITY
 } from "../services/rollback.js";
@@ -116,6 +118,24 @@ export async function handleTaskRollback(db, taskId, input, send, res) {
         requiresForce: result.requiresForce
       });
     }
+    if (result.error === "preview_token_expired") {
+      return send(res, 410, {
+        error: result.error,
+        message: result.message,
+        expiresAt: result.expiresAt,
+        ageMs: result.ageMs,
+        requiresRecheck: result.requiresRecheck
+      });
+    }
+    if (result.error && result.error.startsWith("preview_token_")) {
+      return send(res, 400, {
+        error: result.error,
+        message: result.message,
+        expiresAt: result.expiresAt,
+        ageMs: result.ageMs,
+        requiresRecheck: result.requiresRecheck
+      });
+    }
     const statusMap = {
       task_not_found: 404,
       audit_event_not_found: 404,
@@ -191,6 +211,7 @@ export function handleRollbackableTypes(send, res) {
     actions: Object.values(AUDIT_ACTIONS),
     rollbackableTypes: getRollbackableActionTypes(),
     conflictTypes: CONFLICT_TYPES,
-    conflictSeverity: CONFLICT_SEVERITY
+    conflictSeverity: CONFLICT_SEVERITY,
+    previewToken: getPreviewTokenConfig()
   });
 }

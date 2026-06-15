@@ -4,9 +4,13 @@ import {
   rollbackTask,
   rollbackTaskAssign,
   rollbackTaskStatus,
+  validatePreviewToken,
   CONFLICT_TYPES,
   CONFLICT_SEVERITY,
-  ROLLBACK_RESTORABLE_FIELDS
+  ROLLBACK_RESTORABLE_FIELDS,
+  TOKEN_VALIDATION_ERRORS,
+  PREVIEW_TOKEN_TTL_MS,
+  getPreviewTokenConfig
 } from "../services/rollback.js";
 import {
   recordAuditEvent,
@@ -695,6 +699,304 @@ async function runTests() {
     const oldFields = previewOld.fieldsToRestore.map((f) => f.field);
     assert(oldFields.includes("berthPlan"), "指定旧事件恢复berthPlan");
   });
+
+  console.log("\n--- 19. previewToken 基础验证：空 Token 直接通过 ---");
+  {
+    const noToken = validatePreviewToken(null, "T-1", "EV-1", [], []);
+    assert(noToken.valid === true, "null Token 返回valid=true");
+
+    const emptyToken = validatePreviewToken("", "T-1", "EV-1", [], []);
+    assert(emptyToken.valid === true, "空字符串 Token 返回valid=true");
+
+    const undefinedToken = validatePreviewToken(undefined, "T-1", "EV-1", [], []);
+    assert(undefinedToken.valid === true, "undefined Token 返回valid=true");
+  }
+
+  console.log("\n--- 20. previewToken 无效格式拦截 ---");
+  {
+    const garbageToken = Buffer.from("not-json-at-all").toString("base64");
+    const result = validatePreviewToken(garbageToken, "T-1", "EV-1", [], []);
+    assert(result.valid === false, "非JSON Token 返回valid=false");
+    assert(result.error === TOKEN_VALIDATION_ERRORS.INVALID_FORMAT, "错误码=INVALID_FORMAT");
+    assert(typeof result.message === "string", "返回message");
+  }
+
+  console.log("\n--- 21. previewToken 任务不匹配拦截 ---");
+  {
+    const tokenPayload = {
+      taskId: "T-OTHER",
+      auditEventId: "EV-1",
+      timestamp: new Date().toISOString(),
+      checksum: "abc"
+    };
+    const token = Buffer.from(JSON.stringify(tokenPayload)).toString("base64");
+    const result = validatePreviewToken(token, "T-1", "EV-1", [], []);
+    assert(result.valid === false, "任务不匹配返回valid=false");
+    assert(result.error === TOKEN_VALIDATION_ERRORS.TASK_MISMATCH, "错误码=TASK_MISMATCH");
+  }
+
+  console.log("\n--- 22. previewToken 审计事件不匹配拦截 ---");
+  {
+    const tokenPayload = {
+      taskId: "T-1",
+      auditEventId: "EV-OTHER",
+      timestamp: new Date().toISOString(),
+      checksum: "abc"
+    };
+    const token = Buffer.from(JSON.stringify(tokenPayload)).toString("base64");
+    const result = validatePreviewToken(token, "T-1", "EV-1", [], []);
+    assert(result.valid === false, "事件不匹配返回valid=false");
+    assert(result.error === TOKEN_VALIDATION_ERRORS.EVENT_MISMATCH, "错误码=EVENT_MISMATCH");
+  }
+
+  console.log("\n--- 23. previewToken 过期拦截（TTL=5分钟）---");
+  {
+    const oldTime = new Date(Date.now() - 6 * 60 * 1000);
+    const tokenPayload = {
+      taskId: "T-1",
+      auditEventId: "EV-1",
+      timestamp: oldTime.toISOString(),
+      checksum: "abc"
+    };
+    const token = Buffer.from(JSON.stringify(tokenPayload)).toString("base64");
+    const result = validatePreviewToken(token, "T-1", "EV-1", [], []);
+    assert(result.valid === false, "过期 Token 返回valid=false");
+    assert(result.error === TOKEN_VALIDATION_ERRORS.EXPIRED, "错误码=EXPIRED");
+    assert(result.ageMs > 5 * 60 * 1000, "ageMs 大于5分钟");
+    assert(typeof result.expiresAt === "string", "返回expiresAt");
+  }
+
+  console.log("\n--- 24. previewToken checksum 不匹配拦截（数据已变更）---");
+  await withCleanDb(async (db) => {
+    const testDb = cloneDb(db);
+    const task = testDb.tasks.find((t) => t.id === "T-260614-02");
+
+    const beforeSnapshot = JSON.parse(JSON.stringify(task));
+    task.pilotId = "P-03";
+    task.status = "assigned";
+    task.history.push({ at: new Date().toISOString(), action: "assigned" });
+    await saveDb(testDb);
+
+    const assignEvent = await recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.TASK,
+      objectId: task.id,
+      action: AUDIT_ACTIONS.ASSIGN,
+      before: beforeSnapshot,
+      after: JSON.parse(JSON.stringify(task)),
+      rollbackable: true
+    });
+
+    const preview = await previewTaskRollback(testDb, task.id, assignEvent.id);
+    assert(preview.success === true, "预演成功");
+    assert(typeof preview.previewExpiresAt === "string", "返回previewExpiresAt");
+    assert(new Date(preview.previewExpiresAt) > new Date(), "expiresAt 在未来");
+
+    task.berthPlan = "靠泊N5-CHANGED";
+    await saveDb(testDb);
+
+    const stalePreview = await previewTaskRollback(testDb, task.id, assignEvent.id);
+    const currentFields = stalePreview.fieldsToRestore;
+    const currentConflicts = stalePreview.conflicts;
+
+    const result = validatePreviewToken(
+      preview.previewToken, task.id, assignEvent.id, currentFields, currentConflicts
+    );
+    assert(result.valid === false, "checksum不匹配返回valid=false");
+    assert(result.error === TOKEN_VALIDATION_ERRORS.CHECKSUM_MISMATCH, "错误码=CHECKSUM_MISMATCH");
+    assert(result.requiresRecheck === undefined, "validatePreviewToken本身不返回requiresRecheck");
+  });
+
+  console.log("\n--- 25. previewToken 有效 Token 通过验证 ---");
+  await withCleanDb(async (db) => {
+    const testDb = cloneDb(db);
+    const task = testDb.tasks.find((t) => t.id === "T-260614-02");
+
+    const beforeSnapshot = JSON.parse(JSON.stringify(task));
+    task.pilotId = "P-03";
+    task.status = "assigned";
+    task.history.push({ at: new Date().toISOString(), action: "assigned" });
+    await saveDb(testDb);
+
+    const assignEvent = await recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.TASK,
+      objectId: task.id,
+      action: AUDIT_ACTIONS.ASSIGN,
+      before: beforeSnapshot,
+      after: JSON.parse(JSON.stringify(task)),
+      rollbackable: true
+    });
+
+    const preview = await previewTaskRollback(testDb, task.id, assignEvent.id);
+    const currentFields = preview.fieldsToRestore;
+    const currentConflicts = preview.conflicts;
+
+    const result = validatePreviewToken(
+      preview.previewToken, task.id, assignEvent.id, currentFields, currentConflicts
+    );
+    assert(result.valid === true, "有效 Token 返回valid=true");
+    assert(result.decoded.taskId === task.id, "decoded返回taskId");
+    assert(result.decoded.auditEventId === assignEvent.id, "decoded返回auditEventId");
+    assert(result.decoded.version === 1, "decoded包含version=1");
+    assert(typeof result.ageMs === "number" && result.ageMs >= 0, "返回ageMs");
+    assert(typeof result.expiresAt === "string", "返回expiresAt");
+  });
+
+  console.log("\n--- 26. 执行阶段：有效 Token 成功回滚，返回previewTokenVerified=true ---");
+  await withCleanDb(async (db) => {
+    const testDb = cloneDb(db);
+    const task = testDb.tasks.find((t) => t.id === "T-260614-02");
+
+    const beforeSnapshot = JSON.parse(JSON.stringify(task));
+    task.pilotId = "P-03";
+    task.status = "assigned";
+    task.history.push({ at: new Date().toISOString(), action: "assigned" });
+    await saveDb(testDb);
+
+    const assignEvent = await recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.TASK,
+      objectId: task.id,
+      action: AUDIT_ACTIONS.ASSIGN,
+      before: beforeSnapshot,
+      after: JSON.parse(JSON.stringify(task)),
+      rollbackable: true
+    });
+
+    const preview = await previewTaskRollback(testDb, task.id, assignEvent.id);
+    assert(preview.success === true, "预演成功");
+
+    const result = await rollbackTask(
+      testDb, task.id, assignEvent.id, "op", null, false, preview.previewToken
+    );
+    assert(result.success === true, "带有效Token的回滚执行成功");
+    assert(result.previewTokenVerified === true, "返回previewTokenVerified=true");
+    assert(result.task.pilotId === null, "任务已成功回滚");
+  });
+
+  console.log("\n--- 27. 执行阶段：过期 Token 拦截，返回410级错误 ---");
+  await withCleanDb(async (db) => {
+    const testDb = cloneDb(db);
+    const task = testDb.tasks.find((t) => t.id === "T-260614-02");
+
+    const beforeSnapshot = JSON.parse(JSON.stringify(task));
+    task.pilotId = "P-03";
+    task.status = "assigned";
+    task.history.push({ at: new Date().toISOString(), action: "assigned" });
+    await saveDb(testDb);
+
+    const assignEvent = await recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.TASK,
+      objectId: task.id,
+      action: AUDIT_ACTIONS.ASSIGN,
+      before: beforeSnapshot,
+      after: JSON.parse(JSON.stringify(task)),
+      rollbackable: true
+    });
+
+    const oldTime = new Date(Date.now() - 6 * 60 * 1000);
+    const staleToken = Buffer.from(JSON.stringify({
+      taskId: task.id,
+      auditEventId: assignEvent.id,
+      timestamp: oldTime.toISOString(),
+      checksum: "dummy"
+    })).toString("base64");
+
+    const result = await rollbackTask(
+      testDb, task.id, assignEvent.id, "op", null, false, staleToken
+    );
+    assert(result.success === false, "过期Token执行失败");
+    assert(result.error === TOKEN_VALIDATION_ERRORS.EXPIRED, "错误码=EXPIRED");
+    assert(result.requiresRecheck === true, "返回requiresRecheck=true");
+    assert(typeof result.expiresAt === "string", "返回expiresAt");
+    assert(task.pilotId === "P-03", "任务数据未被修改（拦截生效）");
+  });
+
+  console.log("\n--- 28. 执行阶段：无效 Token（checksum不匹配）拦截 ---");
+  await withCleanDb(async (db) => {
+    const testDb = cloneDb(db);
+    const task = testDb.tasks.find((t) => t.id === "T-260614-02");
+
+    const beforeSnapshot = JSON.parse(JSON.stringify(task));
+    task.pilotId = "P-03";
+    task.status = "assigned";
+    task.history.push({ at: new Date().toISOString(), action: "assigned" });
+    await saveDb(testDb);
+
+    const assignEvent = await recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.TASK,
+      objectId: task.id,
+      action: AUDIT_ACTIONS.ASSIGN,
+      before: beforeSnapshot,
+      after: JSON.parse(JSON.stringify(task)),
+      rollbackable: true
+    });
+
+    const preview = await previewTaskRollback(testDb, task.id, assignEvent.id);
+
+    task.berthPlan = "靠泊-ALTERED";
+    await saveDb(testDb);
+
+    const result = await rollbackTask(
+      testDb, task.id, assignEvent.id, "op", null, false, preview.previewToken
+    );
+    assert(result.success === false, "数据变更后checksum不匹配执行失败");
+    assert(result.error === TOKEN_VALIDATION_ERRORS.CHECKSUM_MISMATCH, "错误码=CHECKSUM_MISMATCH");
+    assert(result.requiresRecheck === true, "返回requiresRecheck=true");
+  });
+
+  console.log("\n--- 29. 路由层：过期Token返回410，无效Token返回400 ---");
+  await withCleanDb(async (db) => {
+    const testDb = cloneDb(db);
+    const task = testDb.tasks.find((t) => t.id === "T-260614-02");
+
+    const beforeSnapshot = JSON.parse(JSON.stringify(task));
+    task.pilotId = "P-03";
+    task.status = "assigned";
+    task.history.push({ at: new Date().toISOString(), action: "assigned" });
+    await saveDb(testDb);
+
+    const assignEvent = await recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.TASK,
+      objectId: task.id,
+      action: AUDIT_ACTIONS.ASSIGN,
+      before: beforeSnapshot,
+      after: JSON.parse(JSON.stringify(task)),
+      rollbackable: true
+    });
+
+    const oldTime = new Date(Date.now() - 6 * 60 * 1000);
+    const expiredToken = Buffer.from(JSON.stringify({
+      taskId: task.id,
+      auditEventId: assignEvent.id,
+      timestamp: oldTime.toISOString(),
+      checksum: "dummy"
+    })).toString("base64");
+
+    const { send: sendExpired, getStatus: getStatusExpired, getData: getDataExpired } = makeSend();
+    await handleTaskRollback(
+      testDb, task.id, { previewToken: expiredToken }, sendExpired, {}
+    );
+    assert(getStatusExpired() === 410, "过期Token路由返回HTTP 410");
+    assert(getDataExpired().error === TOKEN_VALIDATION_ERRORS.EXPIRED, "响应包含EXPIRED错误码");
+    assert(getDataExpired().requiresRecheck === true, "响应包含requiresRecheck");
+
+    const invalidToken = "clearly-not-valid-base64";
+    const { send: sendInvalid, getStatus: getStatusInvalid, getData: getDataInvalid } = makeSend();
+    await handleTaskRollback(
+      testDb, task.id, { previewToken: invalidToken }, sendInvalid, {}
+    );
+    assert(getStatusInvalid() === 400, "无效Token路由返回HTTP 400");
+    assert(getDataInvalid().error && getDataInvalid().error.startsWith("preview_token_"), "响应包含preview_token_错误码");
+  });
+
+  console.log("\n--- 30. Token 配置导出与常量验证 ---");
+  {
+    const config = getPreviewTokenConfig();
+    assert(config.ttlMs === PREVIEW_TOKEN_TTL_MS, "ttlMs 与常量一致");
+    assert(config.ttlMinutes === 5, "ttlMinutes=5");
+    assert(config.errors.INVALID_FORMAT === TOKEN_VALIDATION_ERRORS.INVALID_FORMAT, "errors映射正确");
+    assert(config.errors.EXPIRED === TOKEN_VALIDATION_ERRORS.EXPIRED, "errors映射正确");
+    assert(PREVIEW_TOKEN_TTL_MS === 5 * 60 * 1000, "PREVIEW_TOKEN_TTL_MS = 5分钟");
+  }
 
   console.log(`\n=== 测试结果: ${passed} 通过, ${failed} 失败 ===\n`);
   process.exit(failed > 0 ? 1 : 0);

@@ -40,6 +40,17 @@ const ROLLBACK_RESTORABLE_FIELDS = [
   "vessel"
 ];
 
+const PREVIEW_TOKEN_TTL_MS = 5 * 60 * 1000;
+
+const TOKEN_VALIDATION_ERRORS = {
+  INVALID_FORMAT: "preview_token_invalid",
+  EXPIRED: "preview_token_expired",
+  TASK_MISMATCH: "preview_token_task_mismatch",
+  EVENT_MISMATCH: "preview_token_event_mismatch",
+  STALE_DATA: "preview_token_stale_data",
+  CHECKSUM_MISMATCH: "preview_token_checksum_mismatch"
+};
+
 const CONFLICT_SEVERITY = {
   WARNING: "warning",
   ERROR: "error",
@@ -256,14 +267,30 @@ export async function previewTaskRollback(db, taskId, auditEventId = null) {
   const requiresForce = errorConflicts.length > 0;
   const canRollback = fieldsToRestore.length > 0;
 
+  const checksumPayload = {
+    fieldsCount: fieldsToRestore.length,
+    conflictsTotal: crossConflicts.length,
+    conflictsErrors: errorConflicts.length,
+    conflictsWarnings: warningConflicts.length,
+    requiresForce,
+    canRollback
+  };
+
+  const checksum = Buffer.from(JSON.stringify(checksumPayload))
+    .toString("base64")
+    .replace(/=+$/, "");
+
   const previewToken = Buffer.from(
     JSON.stringify({
       taskId,
       auditEventId: targetEvent.id,
       timestamp: new Date().toISOString(),
-      checksum: fieldsToRestore.length
+      checksum,
+      version: 1
     })
   ).toString("base64");
+
+  const previewExpiresAt = new Date(Date.now() + PREVIEW_TOKEN_TTL_MS).toISOString();
 
   return {
     success: true,
@@ -291,7 +318,106 @@ export async function previewTaskRollback(db, taskId, auditEventId = null) {
     requiresForce,
     canRollback,
     previewToken,
-    previewedAt: new Date().toISOString()
+    previewedAt: new Date().toISOString(),
+    previewExpiresAt
+  };
+}
+
+export function validatePreviewToken(
+  previewToken, taskId, targetAuditEventId, currentFieldsToRestore, currentConflicts
+) {
+  if (!previewToken) {
+    return { valid: true };
+  }
+
+  let decoded;
+  try {
+    decoded = JSON.parse(Buffer.from(previewToken, "base64").toString("utf8"));
+  } catch (e) {
+    return {
+      valid: false,
+      error: TOKEN_VALIDATION_ERRORS.INVALID_FORMAT,
+      message: "预演令牌格式无效"
+    };
+  }
+
+  if (!decoded || typeof decoded !== "object") {
+    return {
+      valid: false,
+      error: TOKEN_VALIDATION_ERRORS.INVALID_FORMAT,
+      message: "预演令牌内容无效"
+    };
+  }
+
+  if (decoded.taskId !== taskId) {
+    return {
+      valid: false,
+      error: TOKEN_VALIDATION_ERRORS.TASK_MISMATCH,
+      message: "预演令牌与当前任务不匹配"
+    };
+  }
+
+  if (decoded.auditEventId !== targetAuditEventId) {
+    return {
+      valid: false,
+      error: TOKEN_VALIDATION_ERRORS.EVENT_MISMATCH,
+      message: "预演令牌与目标审计事件不匹配"
+    };
+  }
+
+  const tokenTime = new Date(decoded.timestamp);
+  const now = Date.now();
+  if (isNaN(tokenTime.getTime())) {
+    return {
+      valid: false,
+      error: TOKEN_VALIDATION_ERRORS.INVALID_FORMAT,
+      message: "预演令牌时间戳无效"
+    };
+  }
+
+  const ageMs = now - tokenTime.getTime();
+  if (ageMs > PREVIEW_TOKEN_TTL_MS) {
+    return {
+      valid: false,
+      error: TOKEN_VALIDATION_ERRORS.EXPIRED,
+      message: "预演令牌已过期，请重新预演",
+      expiresAt: new Date(tokenTime.getTime() + PREVIEW_TOKEN_TTL_MS).toISOString(),
+      ageMs
+    };
+  }
+
+  const errorConflicts = currentConflicts.filter((c) => c.severity === CONFLICT_SEVERITY.ERROR);
+  const warningConflicts = currentConflicts.filter((c) => c.severity === CONFLICT_SEVERITY.WARNING);
+  const requiresForce = errorConflicts.length > 0;
+  const canRollback = currentFieldsToRestore.length > 0;
+
+  const expectedChecksumPayload = {
+    fieldsCount: currentFieldsToRestore.length,
+    conflictsTotal: currentConflicts.length,
+    conflictsErrors: errorConflicts.length,
+    conflictsWarnings: warningConflicts.length,
+    requiresForce,
+    canRollback
+  };
+
+  const expectedChecksum = Buffer.from(JSON.stringify(expectedChecksumPayload))
+    .toString("base64")
+    .replace(/=+$/, "");
+
+  if (decoded.checksum !== expectedChecksum) {
+    return {
+      valid: false,
+      error: TOKEN_VALIDATION_ERRORS.CHECKSUM_MISMATCH,
+      message: "预演结果已失效，任务数据或冲突状态已变更，请重新预演",
+      expiresAt: new Date(tokenTime.getTime() + PREVIEW_TOKEN_TTL_MS).toISOString()
+    };
+  }
+
+  return {
+    valid: true,
+    decoded,
+    ageMs,
+    expiresAt: new Date(tokenTime.getTime() + PREVIEW_TOKEN_TTL_MS).toISOString()
   };
 }
 
@@ -342,6 +468,24 @@ export async function rollbackTask(
       conflicts: crossConflicts,
       requiresForce: true
     };
+  }
+
+  const currentFieldsToRestore = computeFieldsToRestore(task, targetEvent.before);
+
+  if (previewToken) {
+    const tokenValidation = validatePreviewToken(
+      previewToken, taskId, targetEvent.id, currentFieldsToRestore, crossConflicts
+    );
+    if (!tokenValidation.valid) {
+      return {
+        success: false,
+        error: tokenValidation.error,
+        message: tokenValidation.message,
+        expiresAt: tokenValidation.expiresAt || null,
+        ageMs: tokenValidation.ageMs || null,
+        requiresRecheck: true
+      };
+    }
   }
 
   const beforeState = targetEvent.before;
@@ -417,7 +561,8 @@ export async function rollbackTask(
     conflictsResolved: crossConflicts,
     forced: force === true,
     affectedChangeRequestIds: affectedCRs.map((cr) => cr.id),
-    relatedAuditIds
+    relatedAuditIds,
+    previewTokenVerified: !!previewToken
   };
 }
 
@@ -537,4 +682,18 @@ export function getRollbackableActionTypes() {
   ];
 }
 
-export { CONFLICT_TYPES, CONFLICT_SEVERITY, ROLLBACK_RESTORABLE_FIELDS };
+export function getPreviewTokenConfig() {
+  return {
+    ttlMs: PREVIEW_TOKEN_TTL_MS,
+    ttlMinutes: PREVIEW_TOKEN_TTL_MS / 60000,
+    errors: TOKEN_VALIDATION_ERRORS
+  };
+}
+
+export {
+  CONFLICT_TYPES,
+  CONFLICT_SEVERITY,
+  ROLLBACK_RESTORABLE_FIELDS,
+  TOKEN_VALIDATION_ERRORS,
+  PREVIEW_TOKEN_TTL_MS
+};
