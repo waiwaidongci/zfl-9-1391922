@@ -310,6 +310,157 @@ async function runTests() {
       "仿真提交与真实 assign 的 disqualifying 完全一致");
   }
 
+  console.log("\n--- 10. 启动链路验证：模块加载与规则引擎初始化 ---");
+  {
+    const ruleEngine = await import("../config/rule-engine.js");
+    assert(typeof ruleEngine.evaluateCandidateCore === "function", "规则引擎导出 evaluateCandidateCore 函数");
+    assert(Array.isArray(ruleEngine.HARD_RULES), "规则引擎导出 HARD_RULES 数组");
+    assert(typeof ruleEngine.DISQUALIFY_MAP === "object", "规则引擎导出 DISQUALIFY_MAP 对象");
+    assert(typeof ruleEngine.RULE_WEIGHTS === "object", "规则引擎导出 RULE_WEIGHTS 对象");
+    assert(typeof ruleEngine.gradeScore === "function", "规则引擎导出 gradeScore 函数");
+    assert(typeof ruleEngine.shiftCoverageScore === "function", "规则引擎导出 shiftCoverageScore 函数");
+    assert(typeof ruleEngine.workloadScore === "function", "规则引擎导出 workloadScore 函数");
+    assert(typeof ruleEngine.bestGrade === "function", "规则引擎导出 bestGrade 函数");
+
+    const recModule = await import("../utils/recommendation.js");
+    assert(typeof recModule.evaluateCandidate === "function", "推荐模块导出 evaluateCandidate");
+    assert(typeof recModule.pilotFitsCheck === "function", "推荐模块导出 pilotFitsCheck");
+    assert(typeof recModule.findAlternativesForTask === "function", "推荐模块导出 findAlternativesForTask");
+    assert(typeof recModule.recommendPilots === "function", "推荐模块导出 recommendPilots");
+
+    const simModule = await import("../services/simulation/rule-engine.js");
+    assert(typeof simModule.evaluateSimCandidate === "function", "仿真模块导出 evaluateSimCandidate");
+    assert(typeof simModule.rankCandidates === "function", "仿真模块导出 rankCandidates");
+
+    const testPilot = db.pilots[0];
+    const testTask = db.tasks[0];
+    const coreResult = ruleEngine.evaluateCandidateCore(testPilot, testTask, {
+      activeTasks: [],
+      leaveConflicts: []
+    });
+    assert(coreResult.pilotId === testPilot.id, "启动后核心评估函数正常工作");
+    assert(typeof coreResult.eligible === "boolean", "核心评估返回 eligible");
+    assert(Array.isArray(coreResult.disqualifying), "核心评估返回 disqualifying");
+    assert(typeof coreResult.totalScore === "number", "核心评估返回 totalScore");
+    assert(Array.isArray(coreResult.rules), "核心评估返回 rules 数组");
+    assert(coreResult.rules.length === 7, "核心评估返回 7 条规则");
+  }
+
+  console.log("\n--- 11. 请假影响全链路一致性验证 ---");
+  {
+    const { findAlternativesForTask } = await import("../utils/recommendation.js");
+
+    const testTask = {
+      id: "LEAVE-CHAIN-01",
+      vessel: { name: "请假链路测试船", type: "散货船" },
+      district: "东港",
+      tideWindow: { start: "2026-06-17T02:00:00.000Z", end: "2026-06-17T05:00:00.000Z" },
+      requiredGrade: "B",
+      status: "pending",
+      pilotId: null,
+      history: []
+    };
+
+    const pilot = db.pilots.find((p) => p.id === "P-01");
+
+    const realBefore = evaluateCandidate(db, pilot, testTask, testTask.id);
+    const simSnapshotBefore = createSimulationSnapshot(db);
+    const simPilotBefore = simSnapshotBefore.pilots.find((p) => p.id === "P-01");
+    const simBefore = evaluateSimCandidate(simSnapshotBefore, simPilotBefore, testTask);
+
+    assert(realBefore.eligible === false && simBefore.eligible === false,
+      "请假前两者都因值班不在岗不合格");
+    assert(realBefore.disqualifying.includes("not_on_shift") === simBefore.disqualifying.includes("not_on_shift"),
+      "请假前 not_on_shift disqualifying 一致");
+    assert(realBefore.disqualifying.includes("leave_conflict") === simBefore.disqualifying.includes("leave_conflict"),
+      "请假前 leave_conflict disqualifying 一致");
+
+    const realAlts = findAlternativesForTask(db, testTask, "P-01", 3);
+    const simCandidates = simSnapshotBefore.pilots
+      .filter((p) => p.id !== "P-01")
+      .map((p) => evaluateSimCandidate(simSnapshotBefore, p, testTask))
+      .sort((a, b) => {
+        if (b.eligible !== a.eligible) return b.eligible ? 1 : -1;
+        if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 3);
+
+    assert(realAlts.length === simCandidates.length,
+      `替代引航员数量一致: real=${realAlts.length}, sim=${simCandidates.length}`);
+    for (let i = 0; i < realAlts.length; i++) {
+      assert(realAlts[i].pilotId === simCandidates[i].pilotId,
+        `第${i + 1}名替代引航员一致: ${realAlts[i].pilotId} vs ${simCandidates[i].pilotId}`);
+      assert(realAlts[i].eligible === simCandidates[i].eligible,
+        `第${i + 1}名替代引航员 eligible 一致`);
+      assert(Math.abs(realAlts[i].totalScore - simCandidates[i].totalScore) < 0.01,
+        `第${i + 1}名替代引航员 totalScore 一致`);
+    }
+
+    const newLeave = {
+      id: "L-CHAIN-TEST-01",
+      pilotId: "P-01",
+      type: "vacation",
+      period: { start: "2026-06-14T00:00:00.000Z", end: "2026-06-20T00:00:00.000Z" },
+      reason: "链路测试请假",
+      status: "active",
+      createdAt: new Date().toISOString()
+    };
+
+    const testDb = {
+      pilots: db.pilots.map((p) => ({ ...p, shifts: [...p.shifts], districts: [...p.districts], shipTypes: [...p.shipTypes], grades: [...p.grades] })),
+      tasks: [...db.tasks.map((t) => ({ ...t, vessel: { ...t.vessel }, tideWindow: t.tideWindow ? { ...t.tideWindow } : null, history: [...t.history] })), testTask],
+      leaveRecords: [...db.leaveRecords.map((l) => ({ ...l, period: { ...l.period } })), newLeave]
+    };
+
+    const task01 = testDb.tasks.find((t) => t.id === "T-260614-01");
+    const realAfter = evaluateCandidate(testDb, pilot, task01, task01.id);
+
+    const simSnapshotAfter = {
+      pilots: testDb.pilots.map((p) => ({ ...p, shifts: [...p.shifts], districts: [...p.districts], shipTypes: [...p.shipTypes], grades: [...p.grades] })),
+      tasks: testDb.tasks.map((t) => ({ ...t, vessel: { ...t.vessel }, tideWindow: t.tideWindow ? { ...t.tideWindow } : null, history: [...t.history] })),
+      leaveRecords: testDb.leaveRecords.map((l) => ({ ...l, period: { ...l.period } }))
+    };
+    const simPilotAfter = simSnapshotAfter.pilots.find((p) => p.id === "P-01");
+    const simAfter = evaluateSimCandidate(simSnapshotAfter, simPilotAfter, task01);
+
+    assert(realAfter.disqualifying.includes("leave_conflict"),
+      "新增请假后真实评估包含 leave_conflict");
+    assert(simAfter.disqualifying.includes("leave_conflict"),
+      "新增请假后仿真评估包含 leave_conflict");
+    assert(arraysEqualAsSet(realAfter.disqualifying, simAfter.disqualifying),
+      "新增请假后 disqualifying 完全一致");
+    assert(Math.abs(realAfter.totalScore - simAfter.totalScore) < 0.01,
+      "新增请假后 totalScore 一致");
+    assert(realAfter.eligible === simAfter.eligible,
+      "新增请假后 eligible 一致");
+
+    const realAltsAfter = findAlternativesForTask(testDb, task01, "P-01", 3);
+    const simAltsAfter = simSnapshotAfter.pilots
+      .filter((p) => p.id !== "P-01")
+      .map((p) => evaluateSimCandidate(simSnapshotAfter, p, task01))
+      .sort((a, b) => {
+        if (b.eligible !== a.eligible) return b.eligible ? 1 : -1;
+        if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 3);
+
+    assert(realAltsAfter.length === simAltsAfter.length,
+      `请假后替代引航员数量一致: real=${realAltsAfter.length}, sim=${simAltsAfter.length}`);
+    for (let i = 0; i < realAltsAfter.length; i++) {
+      assert(realAltsAfter[i].pilotId === simAltsAfter[i].pilotId,
+        `请假后第${i + 1}名替代引航员一致`);
+      assert(realAltsAfter[i].eligible === simAltsAfter[i].eligible,
+        `请假后第${i + 1}名替代引航员 eligible 一致`);
+    }
+
+    const realNonLeaveDisq = realAfter.disqualifying.filter((d) => d !== "leave_conflict");
+    const simNonLeaveDisq = simAfter.disqualifying.filter((d) => d !== "leave_conflict");
+    assert(arraysEqualAsSet(realNonLeaveDisq, simNonLeaveDisq),
+      "过滤 leave_conflict 后剩余 disqualifying 一致");
+  }
+
   console.log(`\n=== 测试结果: ${passed} 通过, ${failed} 失败 ===\n`);
   process.exit(failed > 0 ? 1 : 0);
 }

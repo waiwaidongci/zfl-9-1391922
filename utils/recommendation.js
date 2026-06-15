@@ -94,4 +94,18 @@ export function recommendPilots(db, task, limit = null) {
   };
 }
 
+export function findAlternativesForTask(db, task, excludedPilotId, limit = 3) {
+  const candidates = db.pilots
+    .filter((pilot) => pilot.id !== excludedPilotId)
+    .map((pilot) => evaluateCandidate(db, pilot, task, task.id));
+
+  candidates.sort((a, b) => {
+    if (b.eligible !== a.eligible) return b.eligible ? 1 : -1;
+    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
+    return a.name.localeCompare(b.name);
+  });
+
+  return limit ? candidates.slice(0, limit) : candidates;
+}
+
 export { bestGrade, gradeScore, shiftCoverageScore, workloadScore };
