@@ -4,8 +4,18 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const dbPath = join(__dirname, "..", "data", "pilot-station.json");
-const auditLogPath = join(__dirname, "..", "data", "audit-log.json");
+
+function getDataDir() {
+  return process.env.ZFL_DATA_DIR || join(__dirname, "..", "data");
+}
+
+function getDbPath() {
+  return join(getDataDir(), "pilot-station.json");
+}
+
+function getAuditLogPath() {
+  return join(getDataDir(), "audit-log.json");
+}
 
 const auditSeed = {
   events: []
@@ -124,6 +134,7 @@ const seed = {
 };
 
 export async function loadDb() {
+  const dbPath = getDbPath();
   if (!existsSync(dbPath)) {
     await mkdir(dirname(dbPath), { recursive: true });
     await writeFile(dbPath, JSON.stringify(seed, null, 2));
@@ -136,6 +147,7 @@ export async function loadDb() {
 }
 
 export async function saveDb(db) {
+  const dbPath = getDbPath();
   await writeFile(dbPath, JSON.stringify(db, null, 2));
 }
 
@@ -181,6 +193,7 @@ export function getLeaveRecord(db, recordId) {
 let _auditWriteLock = Promise.resolve();
 
 export async function loadAuditLog() {
+  const auditLogPath = getAuditLogPath();
   if (!existsSync(auditLogPath)) {
     await mkdir(dirname(auditLogPath), { recursive: true });
     await writeFile(auditLogPath, JSON.stringify(auditSeed, null, 2));
@@ -202,6 +215,7 @@ export async function loadAuditLog() {
 }
 
 export async function saveAuditLog(auditLog) {
+  const auditLogPath = getAuditLogPath();
   const prevLock = _auditWriteLock;
   let releaseLock;
   _auditWriteLock = new Promise((resolve) => {
@@ -214,3 +228,25 @@ export async function saveAuditLog(auditLog) {
     releaseLock();
   }
 }
+
+export async function resetDbToSeed() {
+  const dbPath = getDbPath();
+  await mkdir(dirname(dbPath), { recursive: true });
+  await writeFile(dbPath, JSON.stringify(seed, null, 2));
+  return JSON.parse(JSON.stringify(seed));
+}
+
+export async function resetAuditLogToSeed() {
+  const auditLogPath = getAuditLogPath();
+  await mkdir(dirname(auditLogPath), { recursive: true });
+  await writeFile(auditLogPath, JSON.stringify(auditSeed, null, 2));
+  return JSON.parse(JSON.stringify(auditSeed));
+}
+
+export async function resetAllToSeed() {
+  await resetDbToSeed();
+  await resetAuditLogToSeed();
+  return loadDb();
+}
+
+export { seed as dbSeed, auditSeed, getDataDir, getDbPath, getAuditLogPath };

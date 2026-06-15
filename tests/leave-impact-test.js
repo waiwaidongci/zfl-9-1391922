@@ -1,4 +1,4 @@
-import { loadDb, saveDb } from "../utils/db.js";
+import { loadDb, saveDb, resetAllToSeed } from "../utils/db.js";
 import { handleLeaveCreate, handleLeaveCancel } from "../routes/leaves.js";
 import { affectedActiveTasks } from "../utils/time.js";
 import { findAlternativesForTask, evaluateCandidate } from "../utils/recommendation.js";
@@ -28,16 +28,7 @@ function makeSend() {
 }
 
 async function resetDb() {
-  const { existsSync } = await import("node:fs");
-  const { unlink } = await import("node:fs/promises");
-  const { join, dirname } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const dbPath = join(__dirname, "..", "data", "pilot-station.json");
-  const auditPath = join(__dirname, "..", "data", "audit-log.json");
-  if (existsSync(dbPath)) await unlink(dbPath);
-  if (existsSync(auditPath)) await unlink(auditPath);
-  return loadDb();
+  return resetAllToSeed();
 }
 
 async function runTests() {

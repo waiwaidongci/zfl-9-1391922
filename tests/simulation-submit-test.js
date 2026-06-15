@@ -1,4 +1,4 @@
-import { loadDb, saveDb, loadAuditLog } from "../utils/db.js";
+import { loadDb, saveDb, loadAuditLog, saveAuditLog } from "../utils/db.js";
 import { submitSimulationAssignments } from "../services/simulation/index.js";
 import { ASSIGNED_TASK_STATUS } from "../config/scheduling-rules.js";
 
@@ -21,13 +21,7 @@ function deepClone(obj) {
 
 async function resetDb(originalDb, originalAudit) {
   await saveDb(originalDb);
-  const { writeFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const { dirname } = await import("node:path");
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const auditLogPath = join(__dirname, "..", "data", "audit-log.json");
-  await writeFile(auditLogPath, JSON.stringify(originalAudit, null, 2));
+  await saveAuditLog(originalAudit);
 }
 
 async function runTests() {
