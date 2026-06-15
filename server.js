@@ -60,13 +60,15 @@ function compilePattern(pattern) {
   return { regex, keys };
 }
 
-function matchRoute(pattern, pathname) {
+function matchRoute(route, pathname) {
+  const { pattern, decodeParams = [] } = route;
   const { regex, keys } = compilePattern(pattern);
   const m = pathname.match(regex);
   if (!m) return null;
   const params = {};
   keys.forEach((k, i) => {
-    params[k] = decodeURIComponent(m[i + 1]);
+    const value = m[i + 1];
+    params[k] = decodeParams.includes(k) ? decodeURIComponent(value) : value;
   });
   return params;
 }
@@ -113,6 +115,7 @@ const routes = [
       {
         method: "GET",
         pattern: "/board/:district",
+        decodeParams: ["district"],
         handler: (ctx) => handleBoardDistrict(ctx.db, ctx.params.district, ctx.url.searchParams, send, ctx.res)
       }
     ]
@@ -270,6 +273,7 @@ const routes = [
       {
         method: "GET",
         pattern: "/audit/rollbackable/:objectType/:objectId",
+        decodeParams: ["objectType", "objectId"],
         handler: (ctx) => handleAuditLatestRollbackable(ctx.db, ctx.params.objectType, ctx.params.objectId, send, ctx.res)
       },
       {
@@ -408,11 +412,13 @@ const routes = [
       {
         method: "GET",
         pattern: "/import/sessions/:sessionId",
+        decodeParams: ["sessionId"],
         handler: (ctx) => handleImportSessionDetail(ctx.db, ctx.params.sessionId, send, ctx.res)
       },
       {
         method: "POST",
         pattern: "/import/sessions/:sessionId/cancel",
+        decodeParams: ["sessionId"],
         handler: (ctx) => handleImportSessionCancel(ctx.db, ctx.params.sessionId, send, ctx.res)
       }
     ]
@@ -450,7 +456,7 @@ const server = http.createServer(async (req, res) => {
 
     for (const route of flatRoutes) {
       if (route.method !== req.method) continue;
-      const params = matchRoute(route.pattern, url.pathname);
+      const params = matchRoute(route, url.pathname);
       if (!params) continue;
 
       const ctx = { req, res, db, url, params };
