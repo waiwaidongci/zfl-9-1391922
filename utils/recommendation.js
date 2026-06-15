@@ -1,162 +1,97 @@
-import { overlaps, taskWindow, activeTasksForPilot, intersectInterval, leaveConflictsForPilot } from "./time.js";
-import { RECOMMEND_WEIGHTS, gradeScore, shiftCoverageScore, workloadScore, recommendRulesMeta } from "../config/recommend-rules.js";
+import { overlaps, leaveConflictsForPilot, activeTasksForPilot, intersectInterval } from "./time.js";
+import { RECOMMEND_WEIGHTS, recommendRulesMeta } from "../config/recommend-rules.js";
+import { isActiveTaskStatus } from "../config/scheduling-rules.js";
+import { evaluateCandidateCore, bestGrade, gradeScore, shiftCoverageScore, workloadScore, DISQUALIFY_MAP } from "../config/rule-engine.js";
+
+const RULE_KEY_TO_DIM = {
+  shift_coverage: "shiftCoverage",
+  district_match: "district",
+  ship_type_match: "shipType",
+  grade_match: "grade",
+  no_time_conflict: "noTimeConflict",
+  no_leave_conflict: "noLeaveConflict",
+  workload: "workload"
+};
 
 function minutesBetween(start, end) {
   return (new Date(end) - new Date(start)) / 60000;
 }
 
-function bestGrade(pilotGrades) {
-  const rank = { A: 2, B: 1 };
-  return pilotGrades.reduce((best, g) => (rank[g] ?? 0) > (rank[best] ?? 0) ? g : best, null);
-}
+export function evaluateCandidate(db, pilot, task, exceptTaskId = null) {
+  const effectiveExceptTaskId = exceptTaskId === null ? task.id : exceptTaskId;
+  const pilotActiveTasks = activeTasksForPilot(db, pilot.id, effectiveExceptTaskId);
+  const pilotLeaveConflicts = leaveConflictsForPilot(
+    db, pilot.id, task.tideWindow.start, task.tideWindow.end
+  );
 
-export function evaluateCandidate(db, pilot, task, exceptTaskId) {
-  const window = taskWindow(task);
-  const taskMinutes = minutesBetween(window.start, window.end);
-  const breakdown = {};
-
-  const matchingShifts = pilot.shifts
-    .map((s) => intersectInterval(window.start, window.end, s.start, s.end))
-    .filter(Boolean);
-  const overlapMinutes = matchingShifts.reduce((sum, iv) => sum + minutesBetween(iv.start, iv.end), 0);
-  breakdown.shiftCoverage = {
-    score: shiftCoverageScore(overlapMinutes, taskMinutes),
-    detail: { overlapMinutes, taskMinutes, shifts: pilot.shifts.length }
-  };
-
-  const districtOk = pilot.districts.includes(task.district);
-  breakdown.district = {
-    score: districtOk ? 1 : 0,
-    detail: { pilotDistricts: pilot.districts, taskDistrict: task.district }
-  };
-
-  const shipTypeOk = pilot.shipTypes.includes(task.vessel.type);
-  breakdown.shipType = {
-    score: shipTypeOk ? 1 : 0,
-    detail: { pilotShipTypes: pilot.shipTypes, taskShipType: task.vessel.type }
-  };
-
-  const pilotBestGrade = bestGrade(pilot.grades);
-  breakdown.grade = {
-    score: gradeScore(pilotBestGrade, task.requiredGrade),
-    detail: { pilotGrades: pilot.grades, pilotBestGrade, requiredGrade: task.requiredGrade }
-  };
-
-  const effectiveTaskId = exceptTaskId !== undefined ? exceptTaskId : task.id;
-  const activeTasks = activeTasksForPilot(db, pilot.id, effectiveTaskId);
-  const conflicts = activeTasks.filter((t) => overlaps(window.start, window.end, t.tideWindow.start, t.tideWindow.end));
-  breakdown.noTimeConflict = {
-    score: conflicts.length === 0 ? 1 : 0,
-    detail: { activeTaskCount: activeTasks.length, conflictingTasks: conflicts.map((t) => t.id) }
-  };
-
-  const leaveConflicts = leaveConflictsForPilot(db, pilot.id, window.start, window.end);
-  breakdown.noLeaveConflict = {
-    score: leaveConflicts.length === 0 ? 1 : 0,
-    detail: { conflictingLeaves: leaveConflicts.map((l) => ({ id: l.id, type: l.type, period: l.period })) }
-  };
-
-  breakdown.workload = {
-    score: workloadScore(activeTasks.length),
-    detail: { activeTaskCount: activeTasks.length }
-  };
+  const core = evaluateCandidateCore(pilot, task, {
+    activeTasks: pilotActiveTasks,
+    leaveConflicts: pilotLeaveConflicts
+  });
 
   const weightedScores = {};
-  let totalScore = 0;
-  for (const dim of Object.keys(RECOMMEND_WEIGHTS)) {
-    weightedScores[dim] = Number((breakdown[dim].score * RECOMMEND_WEIGHTS[dim]).toFixed(2));
-    totalScore += weightedScores[dim];
+  const breakdown = {};
+  for (const r of core.rules) {
+    const dimKey = RULE_KEY_TO_DIM[r.rule];
+    const weight = RECOMMEND_WEIGHTS[dimKey] ?? 0;
+    const ws = Number((r.score * weight).toFixed(2));
+    weightedScores[dimKey] = ws;
+    breakdown[dimKey] = { score: r.score, detail: r.detail };
   }
 
-  const eligible = breakdown.shiftCoverage.score > 0 &&
-    breakdown.district.score > 0 &&
-    breakdown.shipType.score > 0 &&
-    breakdown.grade.score > 0 &&
-    breakdown.noTimeConflict.score > 0 &&
-    breakdown.noLeaveConflict.score > 0;
-
-  const disqualifying = [];
-  if (breakdown.shiftCoverage.score <= 0) disqualifying.push("not_on_shift");
-  if (breakdown.district.score <= 0) disqualifying.push("district_mismatch");
-  if (breakdown.shipType.score <= 0) disqualifying.push("ship_type_mismatch");
-  if (breakdown.grade.score <= 0) disqualifying.push("grade_mismatch");
-  if (breakdown.noTimeConflict.score <= 0) disqualifying.push("time_conflict");
-  if (breakdown.noLeaveConflict.score <= 0) disqualifying.push("leave_conflict");
-
   return {
-    pilotId: pilot.id,
-    name: pilot.name,
-    totalScore: Number(totalScore.toFixed(2)),
-    eligible,
-    disqualifying,
+    pilotId: core.pilotId,
+    name: core.name,
+    totalScore: core.totalScore,
+    eligible: core.eligible,
+    disqualifying: core.disqualifying,
     weightedScores,
     breakdown
   };
 }
 
-export function buildCandidateExplanation(db, pilot, task, exceptTaskId) {
-  const evaluation = evaluateCandidate(db, pilot, task, exceptTaskId);
+export function pilotFitsCheck(db, pilot, task, exceptTaskId = null) {
+  const result = evaluateCandidate(db, pilot, task, exceptTaskId);
   return {
     pilot,
-    ok: evaluation.eligible,
-    reasons: evaluation.disqualifying,
-    eligible: evaluation.eligible,
-    disqualifying: evaluation.disqualifying,
-    totalScore: evaluation.totalScore,
-    weightedScores: evaluation.weightedScores,
-    breakdown: evaluation.breakdown
+    ok: result.eligible,
+    reasons: result.disqualifying,
+    eligible: result.eligible,
+    disqualifying: result.disqualifying,
+    totalScore: result.totalScore,
+    weightedScores: result.weightedScores,
+    breakdown: result.breakdown
   };
 }
 
-export function recommendPilots(db, task, limit) {
-  const candidates = db.pilots.map((pilot) => evaluateCandidate(db, pilot, task));
+export function buildCandidateExplanation(db, pilot, task, exceptTaskId = null) {
+  const fit = pilotFitsCheck(db, pilot, task, exceptTaskId);
+  return fit;
+}
+
+export function recommendPilots(db, task, limit = null) {
+  const candidates = db.pilots.map((pilot) => evaluateCandidate(db, pilot, task, task.id));
+
   candidates.sort((a, b) => {
     if (b.eligible !== a.eligible) return b.eligible ? 1 : -1;
     if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
     return a.name.localeCompare(b.name);
   });
-  const result = {
-    taskId: task.id,
-    dimensions: Object.keys(RECOMMEND_WEIGHTS).map((key) => ({
-      key,
-      ...recommendRulesMeta[key],
-      weight: RECOMMEND_WEIGHTS[key]
-    })),
-    candidates: typeof limit === "number" ? candidates.slice(0, limit) : candidates
-  };
-  return result;
-}
 
-export function findAlternativesForTask(db, task, excludePilotId, limit) {
-  const effectiveLimit = typeof limit === "number" ? limit : 3;
-  const candidates = db.pilots
-    .filter((pilot) => pilot.id !== excludePilotId)
-    .map((pilot) => evaluateCandidate(db, pilot, task));
-  candidates.sort((a, b) => {
-    if (b.eligible !== a.eligible) return b.eligible ? 1 : -1;
-    if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
-    return a.name.localeCompare(b.name);
-  });
-  return candidates.slice(0, effectiveLimit).map((c) => ({
-    pilotId: c.pilotId,
-    name: c.name,
-    eligible: c.eligible,
-    totalScore: c.totalScore,
-    disqualifying: c.disqualifying,
-    weightedScores: c.weightedScores
+  const resultCandidates = limit ? candidates.slice(0, limit) : candidates;
+
+  const dimensions = Object.keys(RECOMMEND_WEIGHTS).map((key) => ({
+    key,
+    label: recommendRulesMeta[key]?.label || key,
+    description: recommendRulesMeta[key]?.description || key,
+    weight: RECOMMEND_WEIGHTS[key]
   }));
-}
 
-export function pilotFitsCheck(db, pilot, task, exceptTaskId) {
-  const explanation = buildCandidateExplanation(db, pilot, task, exceptTaskId);
   return {
-    pilot: explanation.pilot,
-    ok: explanation.ok,
-    reasons: explanation.reasons,
-    eligible: explanation.eligible,
-    disqualifying: explanation.disqualifying,
-    totalScore: explanation.totalScore,
-    weightedScores: explanation.weightedScores,
-    breakdown: explanation.breakdown
+    taskId: task.id,
+    dimensions,
+    candidates: resultCandidates
   };
 }
+
+export { bestGrade, gradeScore, shiftCoverageScore, workloadScore };

@@ -251,8 +251,8 @@ async function runTests() {
     };
 
     const simResult = evaluateSimCandidate(snapshot, pilotWithA, taskB);
-    assert(!simResult.eligible, `P-03(grades=["A"])对requiredGrade=B任务应不满足(sim)，eligible=${simResult.eligible}`);
-    assert(simResult.disqualifying.includes("grade_mismatch"), `disqualifying包含grade_mismatch，实际=${simResult.disqualifying}`);
+    assert(simResult.eligible, `P-03(grades=["A"])对requiredGrade=B任务应满足(A级可承担B级任务)(sim)，eligible=${simResult.eligible}`);
+    assert(!simResult.disqualifying.includes("grade_mismatch"), `disqualifying不包含grade_mismatch，实际=${simResult.disqualifying}`);
 
     const taskA = {
       id: "GRADE-CONSISTENCY-02",
@@ -267,6 +267,11 @@ async function runTests() {
     const pilotWithAB = snapshot.pilots.find((p) => p.id === "P-01");
     const simResult3 = evaluateSimCandidate(snapshot, pilotWithAB, taskB);
     assert(simResult3.eligible, `P-01(grades=["A","B"])对requiredGrade=B任务应满足(sim)，eligible=${simResult3.eligible}`);
+
+    const pilotOnlyB = snapshot.pilots.find((p) => p.id === "P-04");
+    const simResult4 = evaluateSimCandidate(snapshot, pilotOnlyB, taskA);
+    assert(!simResult4.eligible, `P-04(grades=["B"])对requiredGrade=A任务应不满足(sim)，eligible=${simResult4.eligible}`);
+    assert(simResult4.disqualifying.includes("grade_mismatch"), `disqualifying包含grade_mismatch，实际=${simResult4.disqualifying}`);
   }
 
   console.log("\n--- 10. disqualifying名称与真实assign一致测试 ---");

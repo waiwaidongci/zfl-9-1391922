@@ -1,124 +1,41 @@
-import { RECOMMEND_WEIGHTS, shiftCoverageScore, workloadScore } from "../../config/recommend-rules.js";
-import { overlaps, intersectInterval } from "../../utils/time.js";
+import { evaluateCandidateCore, HARD_RULES, DISQUALIFY_MAP } from "../../config/rule-engine.js";
+import { overlaps } from "../../utils/time.js";
 import { isActiveTaskStatus } from "../../config/scheduling-rules.js";
 
-function minutesBetween(start, end) {
-  return (new Date(end) - new Date(start)) / 60000;
+function getActiveTasksFromSnapshot(snapshot, pilotId, taskId) {
+  return snapshot.tasks.filter(
+    (t) => t.pilotId === pilotId && t.id !== taskId && isActiveTaskStatus(t.status)
+  );
 }
 
-function bestGrade(pilotGrades) {
-  const rank = { A: 2, B: 1 };
-  return pilotGrades.reduce((best, g) => (rank[g] ?? 0) > (rank[best] ?? 0) ? g : best, null);
+function getLeaveConflictsFromSnapshot(snapshot, pilotId, windowStart, windowEnd) {
+  return snapshot.leaveRecords.filter(
+    (l) =>
+      l.pilotId === pilotId &&
+      l.status === "active" &&
+      overlaps(windowStart, windowEnd, l.period.start, l.period.end)
+  );
 }
 
 export function evaluateSimCandidate(snapshot, pilot, task) {
-  const window = { start: task.tideWindow.start, end: task.tideWindow.end };
-  const taskMinutes = minutesBetween(window.start, window.end);
-  const rules = [];
-
-  const matchingShifts = pilot.shifts
-    .map((s) => intersectInterval(window.start, window.end, s.start, s.end))
-    .filter(Boolean);
-  const overlapMinutes = matchingShifts.reduce((sum, iv) => sum + minutesBetween(iv.start, iv.end), 0);
-  const shiftScore = shiftCoverageScore(overlapMinutes, taskMinutes);
-  rules.push({
-    rule: "shift_coverage",
-    passed: shiftScore > 0,
-    score: shiftScore,
-    weight: RECOMMEND_WEIGHTS.shiftCoverage,
-    detail: { overlapMinutes, taskMinutes, shifts: pilot.shifts.length }
-  });
-
-  const districtOk = pilot.districts.includes(task.district);
-  rules.push({
-    rule: "district_match",
-    passed: districtOk,
-    score: districtOk ? 1 : 0,
-    weight: RECOMMEND_WEIGHTS.district,
-    detail: { pilotDistricts: pilot.districts, taskDistrict: task.district }
-  });
-
-  const shipTypeOk = pilot.shipTypes.includes(task.vessel.type);
-  rules.push({
-    rule: "ship_type_match",
-    passed: shipTypeOk,
-    score: shipTypeOk ? 1 : 0,
-    weight: RECOMMEND_WEIGHTS.shipType,
-    detail: { pilotShipTypes: pilot.shipTypes, taskShipType: task.vessel.type }
-  });
-
-  const gradeOk = pilot.grades.includes(task.requiredGrade);
-  rules.push({
-    rule: "grade_match",
-    passed: gradeOk,
-    score: gradeOk ? 1 : 0,
-    weight: RECOMMEND_WEIGHTS.grade,
-    detail: { pilotGrades: pilot.grades, requiredGrade: task.requiredGrade }
-  });
-
-  const simActiveTasks = snapshot.tasks.filter(
-    (t) => t.pilotId === pilot.id && t.id !== task.id && isActiveTaskStatus(t.status)
+  const activeTasks = getActiveTasksFromSnapshot(snapshot, pilot.id, task.id);
+  const leaveConflicts = getLeaveConflictsFromSnapshot(
+    snapshot, pilot.id, task.tideWindow.start, task.tideWindow.end
   );
-  const simConflictTasks = simActiveTasks.filter(
-    (t) => t.tideWindow && overlaps(window.start, window.end, t.tideWindow.start, t.tideWindow.end)
-  );
-  const noTimeConflict = simConflictTasks.length === 0;
-  rules.push({
-    rule: "no_time_conflict",
-    passed: noTimeConflict,
-    score: noTimeConflict ? 1 : 0,
-    weight: RECOMMEND_WEIGHTS.noTimeConflict,
-    detail: { activeTaskCount: simActiveTasks.length, conflictingTasks: simConflictTasks.map((t) => t.id) }
+
+  const core = evaluateCandidateCore(pilot, task, {
+    activeTasks,
+    leaveConflicts
   });
-
-  const leaveConflicts = snapshot.leaveRecords.filter(
-    (l) => l.pilotId === pilot.id && l.status === "active" && overlaps(window.start, window.end, l.period.start, l.period.end)
-  );
-  const noLeaveConflict = leaveConflicts.length === 0;
-  rules.push({
-    rule: "no_leave_conflict",
-    passed: noLeaveConflict,
-    score: noLeaveConflict ? 1 : 0,
-    weight: RECOMMEND_WEIGHTS.noLeaveConflict,
-    detail: { conflictingLeaves: leaveConflicts.map((l) => ({ id: l.id, type: l.type })) }
-  });
-
-  const wlScore = workloadScore(simActiveTasks.length);
-  rules.push({
-    rule: "workload",
-    passed: true,
-    score: wlScore,
-    weight: RECOMMEND_WEIGHTS.workload,
-    detail: { activeTaskCount: simActiveTasks.length }
-  });
-
-  const hardRules = ["shift_coverage", "district_match", "ship_type_match", "grade_match", "no_time_conflict", "no_leave_conflict"];
-  const disqualifyMap = {
-    shift_coverage: "not_on_shift",
-    district_match: "district_mismatch",
-    ship_type_match: "ship_type_mismatch",
-    grade_match: "grade_mismatch",
-    no_time_conflict: "time_conflict",
-    no_leave_conflict: "leave_conflict"
-  };
-  const eligible = rules.filter((r) => hardRules.includes(r.rule)).every((r) => r.passed);
-
-  let totalScore = 0;
-  const weightedScores = {};
-  for (const r of rules) {
-    const ws = Number((r.score * r.weight).toFixed(2));
-    weightedScores[r.rule] = ws;
-    totalScore += ws;
-  }
 
   return {
-    pilotId: pilot.id,
-    name: pilot.name,
-    eligible,
-    totalScore: Number(totalScore.toFixed(2)),
-    rules,
-    weightedScores,
-    disqualifying: rules.filter((r) => hardRules.includes(r.rule) && !r.passed).map((r) => disqualifyMap[r.rule])
+    pilotId: core.pilotId,
+    name: core.name,
+    eligible: core.eligible,
+    totalScore: core.totalScore,
+    rules: core.rules,
+    weightedScores: core.weightedScores,
+    disqualifying: core.disqualifying
   };
 }
 
@@ -131,3 +48,5 @@ export function rankCandidates(snapshot, task) {
   });
   return candidates;
 }
+
+export { HARD_RULES, DISQUALIFY_MAP };

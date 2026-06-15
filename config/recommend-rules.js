@@ -1,33 +1,40 @@
-export const RECOMMEND_WEIGHTS = {
-  shiftCoverage: 25,
-  district: 20,
-  shipType: 15,
-  grade: 20,
-  noTimeConflict: 15,
-  noLeaveConflict: 10,
-  workload: 5
+import {
+  RULE_WEIGHTS,
+  gradeScore as ruleEngineGradeScore,
+  shiftCoverageScore as ruleEngineShiftCoverageScore,
+  workloadScore as ruleEngineWorkloadScore
+} from "./rule-engine.js";
+
+const RULE_TO_DIM = {
+  shift_coverage: "shiftCoverage",
+  district_match: "district",
+  ship_type_match: "shipType",
+  grade_match: "grade",
+  no_time_conflict: "noTimeConflict",
+  no_leave_conflict: "noLeaveConflict",
+  workload: "workload"
 };
+
+const dimWeights = {};
+for (const [ruleKey, weight] of Object.entries(RULE_WEIGHTS)) {
+  const dimKey = RULE_TO_DIM[ruleKey];
+  if (dimKey) dimWeights[dimKey] = weight;
+}
+
+export const RECOMMEND_WEIGHTS = dimWeights;
 
 export const RECOMMEND_DIMENSIONS = Object.keys(RECOMMEND_WEIGHTS);
 
 export function gradeScore(pilotGrade, requiredGrade) {
-  const rank = { A: 2, B: 1 };
-  const pilotRank = rank[pilotGrade] ?? 0;
-  const requiredRank = rank[requiredGrade] ?? 99;
-  if (pilotRank >= requiredRank) return 1;
-  return 0;
+  return ruleEngineGradeScore(pilotGrade, requiredGrade);
 }
 
 export function shiftCoverageScore(overlapMinutes, taskMinutes) {
-  if (taskMinutes <= 0) return 0;
-  return Math.min(1, overlapMinutes / taskMinutes);
+  return ruleEngineShiftCoverageScore(overlapMinutes, taskMinutes);
 }
 
 export function workloadScore(currentTaskCount) {
-  if (currentTaskCount === 0) return 1;
-  if (currentTaskCount === 1) return 0.7;
-  if (currentTaskCount === 2) return 0.4;
-  return 0.1;
+  return ruleEngineWorkloadScore(currentTaskCount);
 }
 
 export const recommendRulesMeta = {

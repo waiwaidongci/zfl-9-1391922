@@ -1,5 +1,6 @@
 import { overlaps } from "../../utils/time.js";
 import { isActiveTaskStatus } from "../../config/scheduling-rules.js";
+import { bestGrade, gradeScore } from "../../config/rule-engine.js";
 
 export function detectConflictsForTask(snapshot, task) {
   const conflicts = [];
@@ -28,7 +29,7 @@ export function detectConflictsForTask(snapshot, task) {
     });
   }
 
-  const gradePilots = snapshot.pilots.filter((p) => p.grades.includes(task.requiredGrade));
+  const gradePilots = snapshot.pilots.filter((p) => gradeScore(bestGrade(p.grades), task.requiredGrade) > 0);
   if (gradePilots.length === 0) {
     conflicts.push({
       type: "no_pilot_for_grade",
@@ -82,7 +83,7 @@ export function detectConflictsForPilot(snapshot, pilot, task) {
     conflicts.push({ type: "ship_type_mismatch", message: `引航员不具备 ${task.vessel.type} 船型资质` });
   }
 
-  const gradeOk = pilot.grades.includes(task.requiredGrade);
+  const gradeOk = gradeScore(bestGrade(pilot.grades), task.requiredGrade) > 0;
   if (!gradeOk) {
     conflicts.push({ type: "grade_mismatch", message: `引航员等级不满足 ${task.requiredGrade} 要求` });
   }
