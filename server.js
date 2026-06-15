@@ -28,6 +28,8 @@ import {
   handleTaskRollback,
   handleTaskRollbackAssign,
   handleTaskRollbackStatus,
+  handleTaskRollbackPreview,
+  handleTaskRollbackRecheck,
   handleRollbackableTypes
 } from "./routes/audit.js";
 import { recordAuditEvent, AUDIT_OBJECT_TYPES, AUDIT_ACTIONS } from "./services/audit.js";
@@ -53,7 +55,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/") {
       return send(res, 200, {
         service: "港口引航站申请和排班API",
-        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "POST /tasks/:id/rollback", "POST /tasks/:id/rollback/assign", "POST /tasks/:id/rollback/status", "GET /audit", "GET /audit/:id", "GET /audit/rollbackable/:objectType/:objectId", "GET /audit/rollbackable-types", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/preview", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel", "POST /simulation/dispatch", "POST /simulation/submit"]
+        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "POST /tasks/:id/rollback", "POST /tasks/:id/rollback/preview", "POST /tasks/:id/rollback/recheck", "POST /tasks/:id/rollback/assign", "POST /tasks/:id/rollback/status", "GET /audit", "GET /audit/:id", "GET /audit/rollbackable/:objectType/:objectId", "GET /audit/rollbackable-types", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/preview", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel", "POST /simulation/dispatch", "POST /simulation/submit"]
       });
     }
 
@@ -152,6 +154,16 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "POST" && rollbackAction === "status") {
         const input = await body(req);
         return handleTaskRollbackStatus(db, taskId, input, send, res);
+      }
+
+      if (req.method === "POST" && rollbackAction === "preview") {
+        const input = await body(req);
+        return handleTaskRollbackPreview(db, taskId, input, send, res);
+      }
+
+      if (req.method === "POST" && rollbackAction === "recheck") {
+        const input = await body(req);
+        return handleTaskRollbackRecheck(db, taskId, input, send, res);
       }
     }
 
