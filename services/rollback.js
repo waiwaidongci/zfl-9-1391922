@@ -88,6 +88,32 @@ function computeFieldsToRestore(currentTask, beforeState) {
   return fields;
 }
 
+function buildPreviewChecksumPayload(fieldsToRestore, conflicts, requiresForce, canRollback) {
+  return {
+    fields: fieldsToRestore.map((item) => ({
+      field: item.field,
+      currentValue: item.currentValue,
+      restoredValue: item.restoredValue
+    })),
+    conflicts: conflicts.map((item) => ({
+      type: item.type,
+      severity: item.severity,
+      eventIds: item.eventIds || null,
+      changeRequestIds: item.changeRequestIds || null,
+      conflictingTaskId: item.conflictingTaskId || null,
+      pilotId: item.pilotId || null
+    })),
+    requiresForce,
+    canRollback
+  };
+}
+
+function encodePreviewChecksum(payload) {
+  return Buffer.from(JSON.stringify(payload))
+    .toString("base64")
+    .replace(/=+$/, "");
+}
+
 async function getSubsequentEvents(taskId, targetEventTime) {
   const history = await getAuditHistory({
     objectId: taskId,
@@ -267,18 +293,9 @@ export async function previewTaskRollback(db, taskId, auditEventId = null) {
   const requiresForce = errorConflicts.length > 0;
   const canRollback = fieldsToRestore.length > 0;
 
-  const checksumPayload = {
-    fieldsCount: fieldsToRestore.length,
-    conflictsTotal: crossConflicts.length,
-    conflictsErrors: errorConflicts.length,
-    conflictsWarnings: warningConflicts.length,
-    requiresForce,
-    canRollback
-  };
-
-  const checksum = Buffer.from(JSON.stringify(checksumPayload))
-    .toString("base64")
-    .replace(/=+$/, "");
+  const checksum = encodePreviewChecksum(
+    buildPreviewChecksumPayload(fieldsToRestore, crossConflicts, requiresForce, canRollback)
+  );
 
   const previewToken = Buffer.from(
     JSON.stringify({
@@ -391,18 +408,9 @@ export function validatePreviewToken(
   const requiresForce = errorConflicts.length > 0;
   const canRollback = currentFieldsToRestore.length > 0;
 
-  const expectedChecksumPayload = {
-    fieldsCount: currentFieldsToRestore.length,
-    conflictsTotal: currentConflicts.length,
-    conflictsErrors: errorConflicts.length,
-    conflictsWarnings: warningConflicts.length,
-    requiresForce,
-    canRollback
-  };
-
-  const expectedChecksum = Buffer.from(JSON.stringify(expectedChecksumPayload))
-    .toString("base64")
-    .replace(/=+$/, "");
+  const expectedChecksum = encodePreviewChecksum(
+    buildPreviewChecksumPayload(currentFieldsToRestore, currentConflicts, requiresForce, canRollback)
+  );
 
   if (decoded.checksum !== expectedChecksum) {
     return {

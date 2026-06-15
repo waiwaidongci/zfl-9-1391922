@@ -943,7 +943,46 @@ async function runTests() {
     assert(result.requiresRecheck === true, "返回requiresRecheck=true");
   });
 
-  console.log("\n--- 29. 路由层：过期Token返回410，无效Token返回400 ---");
+  console.log("\n--- 29. 执行阶段：恢复字段数量不变但值变化时旧Token被拦截 ---");
+  await withCleanDb(async (db) => {
+    const testDb = cloneDb(db);
+    const task = testDb.tasks.find((t) => t.id === "T-260614-02");
+
+    const beforeSnapshot = JSON.parse(JSON.stringify(task));
+    task.berthPlan = "靠泊N3";
+    task.history.push({ at: new Date().toISOString(), action: "updated", note: "第一次泊位变更" });
+    await saveDb(testDb);
+
+    const updateEvent = await recordAuditEvent({
+      objectType: AUDIT_OBJECT_TYPES.TASK,
+      objectId: task.id,
+      action: AUDIT_ACTIONS.UPDATE,
+      before: beforeSnapshot,
+      after: JSON.parse(JSON.stringify(task)),
+      rollbackable: true
+    });
+
+    const preview = await previewTaskRollback(testDb, task.id, updateEvent.id);
+    assert(preview.success === true, "预演成功");
+    assert(preview.fieldsToRestore.length === 1, "预演恢复字段数量为1");
+
+    task.berthPlan = "靠泊N4";
+    task.history.push({ at: new Date().toISOString(), action: "updated", note: "预演后泊位变更" });
+    await saveDb(testDb);
+
+    const currentPreview = await previewTaskRollback(testDb, task.id, updateEvent.id);
+    assert(currentPreview.fieldsToRestore.length === 1, "变化后恢复字段数量仍为1");
+
+    const result = await rollbackTask(
+      testDb, task.id, updateEvent.id, "op", null, false, preview.previewToken
+    );
+    assert(result.success === false, "恢复字段数量不变但当前值变化时执行失败");
+    assert(result.error === TOKEN_VALIDATION_ERRORS.CHECKSUM_MISMATCH, "错误码=CHECKSUM_MISMATCH");
+    assert(result.requiresRecheck === true, "返回requiresRecheck=true");
+    assert(task.berthPlan === "靠泊N4", "任务数据未被回滚写入");
+  });
+
+  console.log("\n--- 30. 路由层：过期Token返回410，无效Token返回400 ---");
   await withCleanDb(async (db) => {
     const testDb = cloneDb(db);
     const task = testDb.tasks.find((t) => t.id === "T-260614-02");
@@ -988,7 +1027,7 @@ async function runTests() {
     assert(getDataInvalid().error && getDataInvalid().error.startsWith("preview_token_"), "响应包含preview_token_错误码");
   });
 
-  console.log("\n--- 30. Token 配置导出与常量验证 ---");
+  console.log("\n--- 31. Token 配置导出与常量验证 ---");
   {
     const config = getPreviewTokenConfig();
     assert(config.ttlMs === PREVIEW_TOKEN_TTL_MS, "ttlMs 与常量一致");
