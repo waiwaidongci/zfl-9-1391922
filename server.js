@@ -47,255 +47,418 @@ async function body(req) {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
 }
 
+function compilePattern(pattern) {
+  const keys = [];
+  const regex = new RegExp(
+    "^" +
+      pattern.replace(/:([^/]+)/g, (_, name) => {
+        keys.push(name);
+        return "([^/]+)";
+      }) +
+      "$"
+  );
+  return { regex, keys };
+}
+
+function matchRoute(pattern, pathname) {
+  const { regex, keys } = compilePattern(pattern);
+  const m = pathname.match(regex);
+  if (!m) return null;
+  const params = {};
+  keys.forEach((k, i) => {
+    params[k] = decodeURIComponent(m[i + 1]);
+  });
+  return params;
+}
+
+const routes = [
+  {
+    group: "基础信息",
+    endpoints: [
+      {
+        method: "GET",
+        pattern: "/",
+        handler: (ctx) => {
+          return send(ctx.res, 200, {
+            service: "港口引航站申请和排班API",
+            endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "POST /tasks/:id/rollback", "POST /tasks/:id/rollback/preview", "POST /tasks/:id/rollback/recheck", "POST /tasks/:id/rollback/assign", "POST /tasks/:id/rollback/status", "GET /audit", "GET /audit/:id", "GET /audit/rollbackable/:objectType/:objectId", "GET /audit/rollbackable-types", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/preview", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel", "POST /simulation/dispatch", "POST /simulation/submit"]
+          });
+        }
+      },
+      {
+        method: "GET",
+        pattern: "/config/options",
+        handler: (ctx) => handleConfigOptions(send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/config/validate",
+        handler: (ctx) => handleConfigValidate(ctx.db, ctx.url.searchParams, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/shifts/calendar",
+        handler: (ctx) => handleShiftsCalendar(ctx.db, ctx.url.searchParams, send, ctx.res)
+      }
+    ]
+  },
+  {
+    group: "看板",
+    endpoints: [
+      {
+        method: "GET",
+        pattern: "/board",
+        handler: (ctx) => handleBoardOverview(ctx.db, ctx.url.searchParams, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/board/:district",
+        handler: (ctx) => handleBoardDistrict(ctx.db, ctx.params.district, ctx.url.searchParams, send, ctx.res)
+      }
+    ]
+  },
+  {
+    group: "引航员",
+    endpoints: [
+      {
+        method: "GET",
+        pattern: "/pilots",
+        handler: (ctx) => send(ctx.res, 200, ctx.db.pilots)
+      },
+      {
+        method: "POST",
+        pattern: "/pilots",
+        needBody: true,
+        handler: async (ctx) => {
+          const input = ctx.body;
+          const pilot = { id: input.id || `P-${Date.now()}`, name: input.name, districts: input.districts || [], shipTypes: input.shipTypes || [], grades: input.grades || [], shifts: input.shifts || [] };
+          ctx.db.pilots.push(pilot);
+          await saveDb(ctx.db);
+          await recordAuditEvent({
+            objectType: AUDIT_OBJECT_TYPES.PILOT,
+            objectId: pilot.id,
+            action: AUDIT_ACTIONS.CREATE,
+            after: pilot,
+            operator: input.operator || null,
+            note: input.note || "新增引航员",
+            rollbackable: false
+          });
+          return send(ctx.res, 201, pilot);
+        }
+      }
+    ]
+  },
+  {
+    group: "任务 tasks",
+    endpoints: [
+      {
+        method: "GET",
+        pattern: "/tasks",
+        handler: (ctx) => handleTaskList(ctx.db, ctx.url.searchParams, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/tasks",
+        needBody: true,
+        handler: async (ctx) => handleTaskCreate(ctx.db, ctx.body, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/tasks/:id/candidates",
+        handler: (ctx) => {
+          const task = ctx.db.tasks.find((item) => item.id === ctx.params.id);
+          if (!task) return send(ctx.res, 404, { error: "task_not_found" });
+          return handleTaskCandidates(ctx.db, task, send, ctx.res);
+        }
+      },
+      {
+        method: "POST",
+        pattern: "/tasks/:id/recommend",
+        needBody: true,
+        handler: async (ctx) => {
+          const task = ctx.db.tasks.find((item) => item.id === ctx.params.id);
+          if (!task) return send(ctx.res, 404, { error: "task_not_found" });
+          return handleTaskRecommend(ctx.db, task, ctx.body, send, ctx.res);
+        }
+      },
+      {
+        method: "POST",
+        pattern: "/tasks/:id/assign",
+        needBody: true,
+        handler: async (ctx) => {
+          const task = ctx.db.tasks.find((item) => item.id === ctx.params.id);
+          if (!task) return send(ctx.res, 404, { error: "task_not_found" });
+          return handleTaskAssign(ctx.db, task, ctx.body, send, ctx.res);
+        }
+      },
+      {
+        method: "POST",
+        pattern: "/tasks/:id/status",
+        needBody: true,
+        handler: async (ctx) => {
+          const task = ctx.db.tasks.find((item) => item.id === ctx.params.id);
+          if (!task) return send(ctx.res, 404, { error: "task_not_found" });
+          return handleTaskStatus(ctx.db, task, ctx.body, send, ctx.res);
+        }
+      }
+    ]
+  },
+  {
+    group: "任务回滚 rollback",
+    endpoints: [
+      {
+        method: "POST",
+        pattern: "/tasks/:id/rollback",
+        needBody: true,
+        handler: async (ctx) => handleTaskRollback(ctx.db, ctx.params.id, ctx.body, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/tasks/:id/rollback/assign",
+        needBody: true,
+        handler: async (ctx) => {
+          const task = ctx.db.tasks.find((item) => item.id === ctx.params.id);
+          if (!task) return send(ctx.res, 404, { error: "task_not_found" });
+          return handleTaskRollbackAssign(ctx.db, ctx.params.id, ctx.body, send, ctx.res);
+        }
+      },
+      {
+        method: "POST",
+        pattern: "/tasks/:id/rollback/status",
+        needBody: true,
+        handler: async (ctx) => {
+          const task = ctx.db.tasks.find((item) => item.id === ctx.params.id);
+          if (!task) return send(ctx.res, 404, { error: "task_not_found" });
+          return handleTaskRollbackStatus(ctx.db, ctx.params.id, ctx.body, send, ctx.res);
+        }
+      },
+      {
+        method: "POST",
+        pattern: "/tasks/:id/rollback/preview",
+        needBody: true,
+        handler: async (ctx) => {
+          const task = ctx.db.tasks.find((item) => item.id === ctx.params.id);
+          if (!task) return send(ctx.res, 404, { error: "task_not_found" });
+          return handleTaskRollbackPreview(ctx.db, ctx.params.id, ctx.body, send, ctx.res);
+        }
+      },
+      {
+        method: "POST",
+        pattern: "/tasks/:id/rollback/recheck",
+        needBody: true,
+        handler: async (ctx) => {
+          const task = ctx.db.tasks.find((item) => item.id === ctx.params.id);
+          if (!task) return send(ctx.res, 404, { error: "task_not_found" });
+          return handleTaskRollbackRecheck(ctx.db, ctx.params.id, ctx.body, send, ctx.res);
+        }
+      }
+    ]
+  },
+  {
+    group: "审计 audit",
+    endpoints: [
+      {
+        method: "GET",
+        pattern: "/audit",
+        handler: (ctx) => handleAuditHistory(ctx.db, ctx.url.searchParams, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/audit/rollbackable-types",
+        handler: (ctx) => handleRollbackableTypes(send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/audit/rollbackable/:objectType/:objectId",
+        handler: (ctx) => handleAuditLatestRollbackable(ctx.db, ctx.params.objectType, ctx.params.objectId, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/audit/:auditId",
+        handler: (ctx) => {
+          if (ctx.params.auditId === "rollbackable-types") return send(ctx.res, 404, { error: "not_found" });
+          return handleAuditEventDetail(ctx.db, ctx.params.auditId, send, ctx.res);
+        }
+      }
+    ]
+  },
+  {
+    group: "草稿 drafts",
+    endpoints: [
+      {
+        method: "POST",
+        pattern: "/drafts",
+        needBody: true,
+        handler: async (ctx) => handleDraftCreate(ctx.db, ctx.body, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/drafts",
+        handler: (ctx) => handleDraftList(ctx.db, ctx.url.searchParams, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/drafts/:draftId",
+        handler: (ctx) => handleDraftDetail(ctx.db, ctx.params.draftId, send, ctx.res)
+      },
+      {
+        method: "PUT",
+        pattern: "/drafts/:draftId",
+        needBody: true,
+        handler: async (ctx) => handleDraftUpdate(ctx.db, ctx.params.draftId, ctx.body, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/drafts/:draftId/preview",
+        handler: (ctx) => handleDraftPreview(ctx.db, ctx.params.draftId, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/drafts/:draftId/submit",
+        needBody: true,
+        handler: async (ctx) => handleDraftSubmit(ctx.db, ctx.params.draftId, ctx.body, send, ctx.res)
+      }
+    ]
+  },
+  {
+    group: "变更申请 change-requests",
+    endpoints: [
+      {
+        method: "GET",
+        pattern: "/change-requests",
+        handler: (ctx) => handleChangeRequestList(ctx.db, ctx.url.searchParams, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/tasks/:id/change-requests",
+        needBody: true,
+        handler: async (ctx) => handleChangeRequestCreate(ctx.db, ctx.params.id, ctx.body, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/change-requests/:crId",
+        handler: (ctx) => handleChangeRequestDetail(ctx.db, ctx.params.crId, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/change-requests/:crId/recheck",
+        handler: (ctx) => handleChangeRequestRecheck(ctx.db, ctx.params.crId, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/change-requests/:crId/approve",
+        needBody: true,
+        handler: async (ctx) => handleChangeRequestApprove(ctx.db, ctx.params.crId, ctx.body, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/change-requests/:crId/reject",
+        needBody: true,
+        handler: async (ctx) => handleChangeRequestReject(ctx.db, ctx.params.crId, ctx.body, send, ctx.res)
+      }
+    ]
+  },
+  {
+    group: "请假 leaves",
+    endpoints: [
+      {
+        method: "GET",
+        pattern: "/leaves",
+        handler: (ctx) => handleLeaveList(ctx.db, ctx.url.searchParams, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/leaves",
+        needBody: true,
+        handler: async (ctx) => handleLeaveCreate(ctx.db, ctx.body, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/leaves/:leaveId",
+        handler: (ctx) => handleLeaveDetail(ctx.db, ctx.params.leaveId, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/leaves/:leaveId/cancel",
+        needBody: true,
+        handler: async (ctx) => handleLeaveCancel(ctx.db, ctx.params.leaveId, ctx.body, send, ctx.res)
+      }
+    ]
+  },
+  {
+    group: "导入 imports",
+    endpoints: [
+      {
+        method: "POST",
+        pattern: "/import/tasks",
+        needBody: true,
+        handler: async (ctx) => handleImportPreview(ctx.db, ctx.body, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/import/tasks/confirm",
+        needBody: true,
+        handler: async (ctx) => handleImportConfirm(ctx.db, ctx.body, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/import/sessions",
+        handler: (ctx) => handleImportSessionList(ctx.db, ctx.url.searchParams, send, ctx.res)
+      },
+      {
+        method: "GET",
+        pattern: "/import/sessions/:sessionId",
+        handler: (ctx) => handleImportSessionDetail(ctx.db, ctx.params.sessionId, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/import/sessions/:sessionId/cancel",
+        handler: (ctx) => handleImportSessionCancel(ctx.db, ctx.params.sessionId, send, ctx.res)
+      }
+    ]
+  },
+  {
+    group: "仿真 simulation",
+    endpoints: [
+      {
+        method: "POST",
+        pattern: "/simulation/dispatch",
+        needBody: true,
+        handler: async (ctx) => handleSimulationDispatch(ctx.db, ctx.body, send, ctx.res)
+      },
+      {
+        method: "POST",
+        pattern: "/simulation/submit",
+        needBody: true,
+        handler: async (ctx) => handleSimulationSubmit(ctx.db, ctx.body, send, ctx.res)
+      }
+    ]
+  }
+];
+
+const flatRoutes = [];
+for (const group of routes) {
+  for (const endpoint of group.endpoints) {
+    flatRoutes.push(endpoint);
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const db = await loadDb();
 
-    if (req.method === "GET" && url.pathname === "/") {
-      return send(res, 200, {
-        service: "港口引航站申请和排班API",
-        endpoints: ["GET /config/options", "GET /config/validate", "GET /pilots", "POST /pilots", "GET /tasks", "POST /tasks", "GET /tasks/:id/candidates", "POST /tasks/:id/recommend", "POST /tasks/:id/assign", "POST /tasks/:id/status", "POST /tasks/:id/rollback", "POST /tasks/:id/rollback/preview", "POST /tasks/:id/rollback/recheck", "POST /tasks/:id/rollback/assign", "POST /tasks/:id/rollback/status", "GET /audit", "GET /audit/:id", "GET /audit/rollbackable/:objectType/:objectId", "GET /audit/rollbackable-types", "GET /shifts/calendar", "GET /board", "GET /board/:district", "POST /drafts", "GET /drafts", "GET /drafts/:id", "PUT /drafts/:id", "POST /drafts/:id/preview", "POST /drafts/:id/submit", "GET /change-requests", "POST /tasks/:id/change-requests", "GET /change-requests/:id", "POST /change-requests/:id/recheck", "POST /change-requests/:id/approve", "POST /change-requests/:id/reject", "GET /leaves", "POST /leaves", "GET /leaves/:id", "POST /leaves/:id/cancel", "POST /import/tasks", "POST /import/tasks/confirm", "GET /import/sessions", "GET /import/sessions/:sessionId", "POST /import/sessions/:sessionId/cancel", "POST /simulation/dispatch", "POST /simulation/submit"]
-      });
-    }
+    for (const route of flatRoutes) {
+      if (route.method !== req.method) continue;
+      const params = matchRoute(route.pattern, url.pathname);
+      if (!params) continue;
 
-    if (req.method === "GET" && url.pathname === "/config/options") {
-      return handleConfigOptions(send, res);
-    }
-
-    if (req.method === "GET" && url.pathname === "/config/validate") {
-      return handleConfigValidate(db, url.searchParams, send, res);
-    }
-
-    if (req.method === "GET" && url.pathname === "/shifts/calendar") {
-      return handleShiftsCalendar(db, url.searchParams, send, res);
-    }
-
-    if (req.method === "GET" && url.pathname === "/board") {
-      return handleBoardOverview(db, url.searchParams, send, res);
-    }
-
-    const boardMatch = url.pathname.match(/^\/board\/([^/]+)$/);
-    if (boardMatch && req.method === "GET") {
-      const [, district] = boardMatch;
-      return handleBoardDistrict(db, decodeURIComponent(district), url.searchParams, send, res);
-    }
-
-    if (req.method === "GET" && url.pathname === "/pilots") return send(res, 200, db.pilots);
-
-    if (req.method === "POST" && url.pathname === "/pilots") {
-      const input = await body(req);
-      const pilot = { id: input.id || `P-${Date.now()}`, name: input.name, districts: input.districts || [], shipTypes: input.shipTypes || [], grades: input.grades || [], shifts: input.shifts || [] };
-      db.pilots.push(pilot);
-      await saveDb(db);
-      await recordAuditEvent({
-        objectType: AUDIT_OBJECT_TYPES.PILOT,
-        objectId: pilot.id,
-        action: AUDIT_ACTIONS.CREATE,
-        after: pilot,
-        operator: input.operator || null,
-        note: input.note || "新增引航员",
-        rollbackable: false
-      });
-      return send(res, 201, pilot);
-    }
-
-    if (req.method === "GET" && url.pathname === "/tasks") {
-      return handleTaskList(db, url.searchParams, send, res);
-    }
-
-    if (req.method === "POST" && url.pathname === "/tasks") {
-      const input = await body(req);
-      return handleTaskCreate(db, input, send, res);
-    }
-
-    const match = url.pathname.match(/^\/tasks\/([^/]+)\/([^/]+)$/);
-    if (match) {
-      const [, id, action] = match;
-      const task = db.tasks.find((item) => item.id === id);
-      if (!task) return send(res, 404, { error: "task_not_found" });
-
-      if (req.method === "GET" && action === "candidates") {
-        return handleTaskCandidates(db, task, send, res);
+      const ctx = { req, res, db, url, params };
+      if (route.needBody) {
+        ctx.body = await body(req);
       }
-
-      if (req.method === "POST" && action === "recommend") {
-        const input = await body(req);
-        return handleTaskRecommend(db, task, input, send, res);
-      }
-
-      if (req.method === "POST" && action === "assign") {
-        const input = await body(req);
-        return handleTaskAssign(db, task, input, send, res);
-      }
-
-      if (req.method === "POST" && action === "status") {
-        const input = await body(req);
-        return handleTaskStatus(db, task, input, send, res);
-      }
-
-      if (req.method === "POST" && action === "rollback") {
-        const input = await body(req);
-        return handleTaskRollback(db, id, input, send, res);
-      }
-    }
-
-    const taskRollbackMatch = url.pathname.match(/^\/tasks\/([^/]+)\/rollback\/([^/]+)$/);
-    if (taskRollbackMatch) {
-      const [, taskId, rollbackAction] = taskRollbackMatch;
-      const task = db.tasks.find((item) => item.id === taskId);
-      if (!task) return send(res, 404, { error: "task_not_found" });
-
-      if (req.method === "POST" && rollbackAction === "assign") {
-        const input = await body(req);
-        return handleTaskRollbackAssign(db, taskId, input, send, res);
-      }
-
-      if (req.method === "POST" && rollbackAction === "status") {
-        const input = await body(req);
-        return handleTaskRollbackStatus(db, taskId, input, send, res);
-      }
-
-      if (req.method === "POST" && rollbackAction === "preview") {
-        const input = await body(req);
-        return handleTaskRollbackPreview(db, taskId, input, send, res);
-      }
-
-      if (req.method === "POST" && rollbackAction === "recheck") {
-        const input = await body(req);
-        return handleTaskRollbackRecheck(db, taskId, input, send, res);
-      }
-    }
-
-    if (req.method === "GET" && url.pathname === "/audit") {
-      return handleAuditHistory(db, url.searchParams, send, res);
-    }
-
-    if (req.method === "GET" && url.pathname === "/audit/rollbackable-types") {
-      return handleRollbackableTypes(send, res);
-    }
-
-    const auditRollbackableMatch = url.pathname.match(/^\/audit\/rollbackable\/([^/]+)\/([^/]+)$/);
-    if (auditRollbackableMatch && req.method === "GET") {
-      const [, objectType, objectId] = auditRollbackableMatch;
-      return handleAuditLatestRollbackable(db, decodeURIComponent(objectType), decodeURIComponent(objectId), send, res);
-    }
-
-    const auditMatch = url.pathname.match(/^\/audit\/([^/]+)$/);
-    if (auditMatch && req.method === "GET") {
-      const [, auditId] = auditMatch;
-      if (auditId === "rollbackable-types") return send(res, 404, { error: "not_found" });
-      return handleAuditEventDetail(db, auditId, send, res);
-    }
-
-    if (req.method === "POST" && url.pathname === "/drafts") {
-      const input = await body(req);
-      return handleDraftCreate(db, input, send, res);
-    }
-
-    if (req.method === "GET" && url.pathname === "/drafts") {
-      return handleDraftList(db, url.searchParams, send, res);
-    }
-
-    const draftMatch = url.pathname.match(/^\/drafts\/([^/]+)(?:\/([^/]+))?$/);
-    if (draftMatch) {
-      const [, draftId, draftAction] = draftMatch;
-      if (req.method === "GET" && !draftAction) return handleDraftDetail(db, draftId, send, res);
-      if (req.method === "PUT" && !draftAction) {
-        const input = await body(req);
-        return handleDraftUpdate(db, draftId, input, send, res);
-      }
-      if (req.method === "POST" && draftAction === "preview") {
-        return handleDraftPreview(db, draftId, send, res);
-      }
-      if (req.method === "POST" && draftAction === "submit") {
-        const input = await body(req);
-        return handleDraftSubmit(db, draftId, input, send, res);
-      }
-    }
-
-    if (req.method === "GET" && url.pathname === "/change-requests") {
-      return handleChangeRequestList(db, url.searchParams, send, res);
-    }
-
-    const taskCrMatch = url.pathname.match(/^\/tasks\/([^/]+)\/change-requests$/);
-    if (taskCrMatch) {
-      const [, taskId] = taskCrMatch;
-      if (req.method === "POST") {
-        const input = await body(req);
-        return handleChangeRequestCreate(db, taskId, input, send, res);
-      }
-    }
-
-    const crMatch = url.pathname.match(/^\/change-requests\/([^/]+)(?:\/([^/]+))?$/);
-    if (crMatch) {
-      const [, crId, crAction] = crMatch;
-      if (req.method === "GET" && !crAction) return handleChangeRequestDetail(db, crId, send, res);
-      if (req.method === "POST" && crAction === "recheck") {
-        return handleChangeRequestRecheck(db, crId, send, res);
-      }
-      if (req.method === "POST" && crAction === "approve") {
-        const input = await body(req);
-        return handleChangeRequestApprove(db, crId, input, send, res);
-      }
-      if (req.method === "POST" && crAction === "reject") {
-        const input = await body(req);
-        return handleChangeRequestReject(db, crId, input, send, res);
-      }
-    }
-
-    if (req.method === "GET" && url.pathname === "/leaves") {
-      return handleLeaveList(db, url.searchParams, send, res);
-    }
-
-    if (req.method === "POST" && url.pathname === "/leaves") {
-      const input = await body(req);
-      return handleLeaveCreate(db, input, send, res);
-    }
-
-    const leaveMatch = url.pathname.match(/^\/leaves\/([^/]+)(?:\/([^/]+))?$/);
-    if (leaveMatch) {
-      const [, leaveId, leaveAction] = leaveMatch;
-      if (req.method === "GET" && !leaveAction) return handleLeaveDetail(db, leaveId, send, res);
-      if (req.method === "POST" && leaveAction === "cancel") {
-        const input = await body(req);
-        return handleLeaveCancel(db, leaveId, input, send, res);
-      }
-    }
-
-    if (req.method === "POST" && url.pathname === "/import/tasks") {
-      const input = await body(req);
-      return handleImportPreview(db, input, send, res);
-    }
-
-    if (req.method === "POST" && url.pathname === "/import/tasks/confirm") {
-      const input = await body(req);
-      return handleImportConfirm(db, input, send, res);
-    }
-
-    if (req.method === "GET" && url.pathname === "/import/sessions") {
-      return handleImportSessionList(db, url.searchParams, send, res);
-    }
-
-    const importSessionMatch = url.pathname.match(/^\/import\/sessions\/([^/]+)(?:\/([^/]+))?$/);
-    if (importSessionMatch) {
-      const [, sessionId, sessionAction] = importSessionMatch;
-      if (req.method === "GET" && !sessionAction) {
-        return handleImportSessionDetail(db, decodeURIComponent(sessionId), send, res);
-      }
-      if (req.method === "POST" && sessionAction === "cancel") {
-        return handleImportSessionCancel(db, decodeURIComponent(sessionId), send, res);
-      }
-    }
-
-    if (req.method === "POST" && url.pathname === "/simulation/dispatch") {
-      const input = await body(req);
-      return handleSimulationDispatch(db, input, send, res);
-    }
-
-    if (req.method === "POST" && url.pathname === "/simulation/submit") {
-      const input = await body(req);
-      return handleSimulationSubmit(db, input, send, res);
+      await route.handler(ctx);
+      return;
     }
 
     send(res, 404, { error: "not_found" });
